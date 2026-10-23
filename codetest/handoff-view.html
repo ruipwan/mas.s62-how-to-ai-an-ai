@@ -1,0 +1,82 @@
+<style>
+#handoff-story{margin-bottom:30px;border-color:var(--accent);scroll-margin-top:20px}
+#handoff-story .story-heading{font-size:23px;letter-spacing:-.025em;margin:5px 0 7px;line-height:1.2}
+#handoff-story .story-head{padding:23px 25px 19px;background:var(--accent-soft)}
+#handoff-story .story-head p{margin:0;color:var(--muted);max-width:800px}
+#handoff-story .story-controls{display:flex;gap:8px;flex-wrap:wrap;padding:17px 24px 0;align-items:center}
+#handoff-story .story-steps{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+#handoff-story .story-step{font-size:12px;text-align:left;border:0;background:var(--soft);padding:9px 12px}
+#handoff-story .story-step[aria-pressed=true]{background:var(--ink);color:var(--panel)}
+#handoff-story .story-grid{display:grid;grid-template-columns:minmax(0,1.8fr) minmax(280px,1fr);gap:24px;padding:20px 24px 22px;align-items:start}
+#handoff-story .story-network{width:100%;display:block;min-width:510px}
+#handoff-story .story-graph-wrap{overflow:auto}
+#handoff-story .story-network text{font-family:inherit}
+#handoff-story .story-node{fill:var(--soft);stroke:var(--line);stroke-width:1.3}
+#handoff-story .story-node.active{fill:var(--accent-soft);stroke:var(--accent);stroke-width:2}
+#handoff-story .story-node-label{fill:var(--ink);font-size:19px;font-weight:650}
+#handoff-story .story-secondary{fill:var(--muted);font-size:13px}
+#handoff-story .story-score{fill:var(--accent);font-size:21px;font-weight:650}
+#handoff-story .story-future{opacity:.25}
+#handoff-story .story-edge{fill:none;stroke:var(--blue);stroke-width:2.4}
+#handoff-story .story-edge.publication{stroke:var(--accent);stroke-dasharray:6 4}
+#handoff-story .story-details{border-left:2px solid var(--line);padding-left:22px;min-height:230px}
+#handoff-story .story-details h3{font-size:19px;line-height:1.3;margin:7px 0 12px}
+#handoff-story .story-details p{font-size:13px;line-height:1.7;margin:10px 0}
+#handoff-story .story-evidence{display:flex;gap:6px;flex-wrap:wrap;margin-top:15px}
+#handoff-story .story-evidence button{font-size:11px;padding:5px 8px}
+#handoff-story .story-proof{margin-top:14px}
+#handoff-story pre{font:11px/1.6 ui-monospace,SFMono-Regular,monospace;background:var(--soft);padding:12px;border-radius:6px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto}
+#handoff-story summary{font-size:12px;cursor:pointer;color:var(--accent)}
+#handoff-story .story-caption{padding:0 24px 18px;font-size:12px;color:var(--muted)}
+#handoff-story .story-legend{font-size:12px;color:var(--muted);display:flex;gap:18px;flex-wrap:wrap;padding:0 12px}
+#handoff-story .story-legend i{display:inline-block;width:20px;border-top:2px solid var(--blue);vertical-align:middle;margin-right:5px}
+#handoff-story .story-legend .publication{border-color:var(--accent);border-top-style:dashed}
+@media(max-width:1050px){#handoff-story .story-grid{grid-template-columns:1fr}#handoff-story .story-details{min-height:0}#handoff-story .story-network{max-height:330px}}
+@media(max-width:540px){#handoff-story .story-head,#handoff-story .story-grid{padding:17px}#handoff-story .story-controls{padding:15px 17px 0}#handoff-story .story-heading{font-size:21px}#handoff-story .story-network{min-width:460px}}
+</style>
+<section id="handoff-story" class="panel" aria-label="Verified scratchpad code handoff">
+ <div class="story-head"><div class="eyebrow">Recorded code reuse · round 10</div><h2 class="story-heading">One agent’s solution became another’s starting point.</h2><p>A03 reached 200/201. A04 reused the saved code and fixed the remaining bug. A01 then brought that result into Team 1.</p></div>
+ <div class="story-controls"><div id="handoff-steps" class="story-steps" role="group" aria-label="Handoff stages"></div><button id="handoff-play" type="button">Replay handoff</button></div>
+ <div class="story-grid"><div class="story-graph-wrap"><svg id="handoff-graph" class="story-network" viewBox="0 0 800 330" role="img" aria-label="Code moves from A03 to A04, then to Team 1; the auction publishes A04’s solution"></svg><div class="story-legend"><span><i></i>Saved code retrieved</span><span><i class="publication"></i>Auction publication</span></div></div>
+ <div class="story-details" aria-live="polite"><div class="eyebrow" id="handoff-step-number"></div><h3 id="handoff-step-title"></h3><p id="handoff-step-text"></p><div class="story-evidence" id="handoff-evidence"></div><details class="story-proof" id="handoff-proof"><summary>Inspect recorded evidence</summary><pre id="handoff-payload"></pre></details></div></div>
+ <div class="story-caption">This is a verified sequence from the final round, independent of the round slider below. Source transfer is backed by a recorded copy command and test results. Bids use simulated wealth, not API dollars.</div>
+</section>
+<script>
+document.addEventListener('DOMContentLoaded',()=>{
+ const audit=DATA.handoff;if(!audit)return;
+ const stageData=[
+  {name:'Candidate',title:'A03 saves a 200/201 candidate',text:'The visible check leaves one failure: JSON-backed removal returns a string document ID instead of an integer. The candidate is retained in shared memory.',seqs:[3117],node:'a03'},
+  {name:'Fetch',title:'A04 retrieves A03’s code',text:'A04 explicitly fetches r10-solo-agent-03 from the scratchpad. The artifact uses the current public base. Retrieval makes the code available for inspection; it does not apply it automatically.',seqs:[3132],node:'a04'},
+  {name:'Repair',title:'A04 copies, fixes and tests it',text:'The recorded command copies A03’s table.py, then changes the returned ID to self.document_id_class(key). Eight focused regressions pass, followed by all 201 tests.',seqs:[3156,3162,3175],node:'a04'},
+  {name:'Reuse',title:'The result reaches Team 1',text:'A01 fetches A04’s repaired artifact and copies table.py into the workspace shared with A00. Their candidate also passes 201/201. The code has crossed two workspace boundaries.',seqs:[3191,3214,3287],node:'team'},
+  {name:'Publish',title:'A04’s solution becomes public',text:'A04 bids 0.100 virtual units; Team 1 bids 0.050. The auction publishes A04’s 201/201 candidate. A separate final evaluation confirms 201 unique tests passed, with no failures, errors or skips.',seqs:[3289],node:'repo'}
+ ];
+ // This editorial tour is shown only when its audited event identities exist.
+ if(![3117,3132,3156,3175,3191,3287].every(seq=>audit.events.some(e=>e.seq===seq))){$('handoff-story').hidden=true;return}
+ let step=4,playback=null;
+ const stop=()=>{clearInterval(playback);playback=null;$('handoff-play').textContent='Replay handoff'};
+ const payload=seq=>audit.events.find(e=>e.seq===seq)||E.find(e=>e.seq===seq);
+ function inspect(seq){const e=payload(seq);$('handoff-payload').textContent=JSON.stringify(e,null,2);$('handoff-proof').open=true;}
+ function draw(){
+  const current=stageData[step];
+  $('handoff-steps').innerHTML=stageData.map((s,i)=>`<button type="button" class="story-step" data-handoff-step="${i}" aria-pressed="${i===step}">${i+1}. ${s.name}</button>`).join('');
+  for(const b of $('handoff-steps').querySelectorAll('button'))b.onclick=()=>{stop();step=Number(b.dataset.handoffStep);draw()};
+  $('handoff-step-number').textContent=`Step ${step+1} of 5 · round 10`;$('handoff-step-title').textContent=current.title;$('handoff-step-text').textContent=current.text;
+  $('handoff-evidence').innerHTML=current.seqs.map(seq=>`<button type="button" data-handoff-event="${seq}">Event #${seq}</button>`).join('');
+  for(const b of $('handoff-evidence').querySelectorAll('button'))b.onclick=()=>inspect(Number(b.dataset.handoffEvent));
+  $('handoff-proof').open=false;$('handoff-payload').textContent=JSON.stringify(payload(current.seqs[0]),null,2);
+  const node=(id,x,y,w,h,label,sub,score,future=false)=>`<g class="${future?'story-future':''}"><rect class="story-node ${current.node===id?'active':''}" x="${x}" y="${y}" width="${w}" height="${h}" rx="10"/><text class="story-node-label" x="${x+18}" y="${y+28}">${label}</text><text class="story-secondary" x="${x+18}" y="${y+49}">${sub}</text><text class="story-score" x="${x+18}" y="${y+79}">${score}</text></g>`;
+  $('handoff-graph').innerHTML=`<title>Round 10: audited code reuse and publication</title><desc>A03 produces 200 passing tests. A04 fetches and repairs the candidate to 201, A01 reuses it with A00, and the auction publishes A04.</desc><defs><marker id="handoff-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="var(--blue)"/></marker><marker id="handoff-publish-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="var(--accent)"/></marker></defs>
+   <g class="${step<1?'story-future':''}"><path class="story-edge" d="M194 105 H290" marker-end="url(#handoff-arrow)"/><text class="story-secondary" x="242" y="92" text-anchor="middle">Fetch code</text></g>
+   <g class="${step<3?'story-future':''}"><path class="story-edge" d="M384 156 V229" marker-end="url(#handoff-arrow)"/><text class="story-secondary" x="397" y="198">A01 fetches</text></g>
+   <g class="${step<4?'story-future':''}"><path class="story-edge publication" d="M478 105 H592" marker-end="url(#handoff-publish-arrow)"/><text class="story-secondary" x="535" y="92" text-anchor="middle">Publish</text></g>
+   ${node('a03',10,57,184,99,'A03','Solo · creates candidate','200 / 201')}
+   ${node('a04',290,57,188,99,'A04',step<2?'Solo · retrieves code':'Solo · repairs candidate',step<2?'200 / 201 input':'201 / 201',step<1)}
+   ${node('repo',594,57,192,99,'Public repository','Final evaluation','201 / 201',step<4)}
+   ${node('team',290,231,220,96,'A01 + A00','Team 1 · reuses repair','201 / 201',step<3)}`;
+ }
+ $('handoff-play').onclick=()=>{if(playback){stop();return}step=0;draw();$('handoff-play').textContent='Pause handoff';playback=setInterval(()=>{step++;draw();if(step===stageData.length-1)stop()},2600)};
+ document.addEventListener('visibilitychange',()=>{if(document.hidden)stop()});
+ draw();
+});
+</script>

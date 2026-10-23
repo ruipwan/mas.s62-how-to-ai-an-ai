@@ -1,0 +1,39 @@
+{
+  "source": "../eom-teams",
+  "files": {
+    "eom-teams/hayekmas/base/config.py": "abcf78b2fbcd8459c2e57d45e713fd07494d462ebf6c0ca09c1ea7543f66b238",
+    "eom-teams/hayekmas/base/env.py": "098be6493d61ba646e5f8c63807401ce211cffbf54340bfb931aae1c544a9e7d",
+    "eom-teams/hayekmas/base/population.py": "281b29ca03b2f9529629e9c3b8bb6698fe7038f9fd2a8ee827dd4fe74cae8eef",
+    "eom-teams/hayekmas/base/mas.py": "e4f5e85314d570500eb0a23856ba3e9843e984d27e640ec108de6f2024639186",
+    "eom-teams/hayekmas/base/__init__.py": "60a1b32ad83b4333e23264b97af2ffa2af6b7af54ac94a8e0b373aa616c2ecdc",
+    "eom-teams/hayekmas/base/prompts.py": "95f52ca7d813f60f9ca83660d24aa78b49c91e58b4600a343adfdebeb98fdc69",
+    "eom-teams/hayekmas/base/pipeline.py": "b154efd73cf03dfa93f0310956229951dd9aacda61ec304185ee249517cd4f3a",
+    "eom-teams/hayekmas/base/agent.py": "0fee568d3762577be9776cc9bd9168eabc962410516ef26e7201288362f58092",
+    "eom-teams/hayekmas/utils/__init__.py": "a0d045d45faaf7e854db7290fb2ea15a396265225579dad3d1ccfa8d9041f9d9",
+    "eom-teams/hayekmas/utils/llm.py": "00a8563b9bce97870b4f2d38bec4680be8d313da02a8b968f996f78e75f88aa3",
+    "eom-teams/hayekmas/utils/logger.py": "816991f8fae2884ae8956c8725f58950dfbdc258f6708fb9579f9e7643698db4",
+    "eom-teams/hayekmas/utils/viz.py": "bedf7aa2eb3dded351c5428394d50f9ad2367662503b3f3325202ddd44edf5c5",
+    "eom-teams/hayekmas/utils/data.py": "ff5516a1ba22a12370d522a13b8afed7977df6b75c5709b10e6592ea7a4df135",
+    "eom-teams/hayekmas/adapters/teams/config.py": "f7a8ec451c2c01ab50b1d5e5c1ef55e226b86d2242703010362d9d2c78cef365",
+    "eom-teams/hayekmas/adapters/teams/env.py": "f80b9302ad1738f8f77499fb96af2cb086d198cc78c21112352af0b9f4469959",
+    "eom-teams/hayekmas/adapters/teams/openrouter.py": "7490c317900241f58a8a3b9bcdf502c2b783f223e30463091ca549c4e09eef8c",
+    "eom-teams/hayekmas/adapters/teams/evolution.py": "d0ccb50b74ae19714c5fc87eb780335c586de14656ed996959f094714b9a0c97",
+    "eom-teams/hayekmas/adapters/teams/evaluation.py": "b94156e57a95fe9111dd9944b27a9d7c9d1c7ca1bc01dd369507da4c05c860c0",
+    "eom-teams/hayekmas/adapters/teams/policy.py": "364a7c361c5f9397533ddacc2db0f7ce7cac4bbc81b17d29c6fb666595f725a4",
+    "eom-teams/hayekmas/adapters/teams/mas.py": "db935b621ba69ba84e2d16a80cfa9e2883877047cf4261888aed24256a76335d",
+    "eom-teams/hayekmas/adapters/teams/__init__.py": "d4ab414136057bd4d848a53bce042342f6e6050eb5ef4ffa189ef91e2ba8eed6",
+    "eom-teams/hayekmas/adapters/teams/token_allocation.py": "cbdf35ad32c147879cc792985548b729f65d056728706d14adf7a09ff4385967",
+    "eom-teams/hayekmas/adapters/teams/compact_rounds.py": "695c284e7ece6ba4ddd911220355069279e5aca28f0c7235120e660127fc8c8a",
+    "eom-teams/hayekmas/adapters/teams/team.py": "f1ec1c972340ac783bbe3a6c684203c25b607421c2dc67e2dd84b1d4def30d12",
+    "eom-teams/hayekmas/adapters/teams/runtime.py": "c6762dd0d247933c518cb7967c50144cb90b6cb800c86d67cdc1b64ec3317dbe",
+    "eom-teams/hayekmas/adapters/teams/replay.py": "988506d88b15e55c8054d4dfe50157e4e3bdc01b6657b8ac34667f4ee2754e5f",
+    "eom-teams/hayekmas/adapters/teams/agent.py": "8b4503135dce6ef8a46241153a3279584539f151ada315d99cf622a1735cf10a",
+    "eom-teams/hayekmas/adapters/teams/evaluation_report.py": "c00ddcb8a10e404b66b75716385846f32092387c35bd51525280923b0484aba3",
+    "eom-teams/hayekmas/adapters/teams/report.py": "90a09cf85204d0ea5cab7cf54bbcb9e3cbb5285a36a324425b6b168d41f2d800",
+    "eom-teams/hayekmas/adapters/teams/reviewed.py": "309256460a6d7f1738e1127285dc61f069a57aaf859c7eda913a729c143d62a7",
+    "eom-teams/hayekmas/adapters/teams/round_protocol.py": "f754fd7049b5f57c7daa362b7c60c2b496464b02c2a0edbf2f89076235971e0d"
+  },
+  "modifications": {
+    "hayekmas/base/__init__.py": "Minimal import surface; implementation files unchanged."
+  }
+}

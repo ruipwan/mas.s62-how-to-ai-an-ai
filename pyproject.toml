@@ -1,0 +1,12 @@
+[project]
+name = "code-testing-v1"
+version = "1.0.0"
+description = "k=20 voluntary-coalition coding experiments"
+requires-python = ">=3.11"
+dependencies = ["requests>=2.32,<3"]
+
+[project.optional-dependencies]
+benchmarks = ["programbench @ git+https://github.com/facebookresearch/ProgramBench.git@27f02157c785f8da3647aa6dbbe6b9137f99f10e"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,10 @@
+{
+  "k": 5,
+  "rounds": 6,
+  "max_rounds": 6,
+  "work_calls": 4,
+  "membership_every": 1,
+  "condition": "voluntary_pooled",
+  "shared_scratchpad": true,
+  "seed": 7
+}
