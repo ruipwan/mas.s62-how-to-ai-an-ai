@@ -2,6 +2,24 @@
 
 A Python playground for coding agents that form teams, work in private workspaces, share notes and code, and bid to integrate a contribution into a shared repository. This package contains source and tests, without historical logs, credentials, datasets or campaign ledgers. Extracted from `code-testing-v1`; current source can differ from historical experiment snapshots.
 
+## This copy: MAS.S62 How to AI an AI for (Almost) Anything
+
+Copied with full history from [bobyhaha/Team-Economy](https://github.com/bobyhaha/Team-Economy) (commit `58ebbf2`, Baiyu Zhu). Two opt-in changes are added on top. Both default to off, so existing configs, manifests and prompt revisions are unchanged.
+
+| Flag | What it does |
+| --- | --- |
+| `"regression_gate": true` | On commit0, a code change whose visible test score is below the public high water mark cannot enter the auction. Equal scores pass. Bids still choose among the remaining candidates. Blocked candidates emit `regression_blocked` events, and the system prompt states the rule. The prompt revision gets a `+regression-gate` suffix. |
+| `"memory_trace": true` | Each agent keeps a bounded trace (2000 characters) of its own actions across slots and rounds, instead of having its memory replaced by its latest message. |
+
+A/B run for the gate, same task, model and seed:
+
+```bash
+python run.py run --config configs/k5-gpt6-luna-scratchpad.json --task datasets/commit0-tinydb/task.json --out runs/tinydb-base
+python run.py run --config configs/k5-gpt6-luna-scratchpad-gate.json --task datasets/commit0-tinydb/task.json --out runs/tinydb-gate
+```
+
+Compare final hidden score, accepted regressions, rounds without a publication, and cost per point. Test `memory_trace` as a separate run so the two effects stay separable. The new unit tests are in `tests/test_v1.py`; run the full suite before paid runs.
+
 ## Free quick start
 
 Requires Python 3.11+ and Git. No Docker or API key is needed for the scripted demo.

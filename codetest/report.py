@@ -51,7 +51,8 @@ def metrics(state, events):
             'phase_cost_usd': dict(costs), 'tokens': dict(tokens),
             'work_calls_by_agent': dict(by_agent), 'tool_counts': dict(by_tool),
             'invalid_decisions': sum(e['event'] in {'invalid_action', 'invalid_response'} for e in events),
-            'no_publication_rounds': sum(e['event'] == 'no_publication' for e in events)}
+            'no_publication_rounds': sum(e['event'] == 'no_publication' for e in events),
+            'regressions_blocked': sum(e['event'] == 'regression_blocked' for e in events)}
 
 
 def replay(directory, *, filename='replay.html'):

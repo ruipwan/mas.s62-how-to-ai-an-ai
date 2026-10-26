@@ -541,6 +541,33 @@ class MechanismTests(unittest.TestCase):
         self.assertAlmostEqual(self.engine.dividends, 2)
         self.engine.assert_accounting()
 
+    def test_regression_gate_blocks_only_lower_visible_scores(self):
+        self.task.data['benchmark'] = 'commit0'
+        self.engine.high_water, self.engine.denominator = .5, 10
+        lower = {'build': True, 'score': .4, 'total': 10}
+        self.assertFalse(self.engine.regressed(lower, True))  # The gate is opt-in.
+        self.engine.cfg.regression_gate = True
+        self.assertTrue(self.engine.regressed(lower, True))
+        self.assertFalse(self.engine.regressed({'score': .5, 'total': 10}, True))  # Ties pass.
+        self.assertFalse(self.engine.regressed(lower, False))  # Notes or probes only.
+        self.assertTrue(self.engine.regressed({'score': None, 'total': 10}, True))
+        self.assertTrue(self.engine.regressed({'score': .9, 'total': 12}, True))
+        self.engine.denominator = None
+        self.assertFalse(self.engine.regressed({'score': None}, True))  # No valid score yet.
+
+    def test_regression_gate_and_memory_trace_are_opt_in(self):
+        from codetest.policy import prompt_revision
+        self.assertNotIn('regression_gate', Config().as_dict())
+        self.assertNotIn('memory_trace', Config().as_dict())
+        self.assertTrue(Config(regression_gate=True).as_dict()['regression_gate'])
+        self.assertEqual(prompt_revision(Config(regression_gate=True)), 'adaptive-response-tokens-5+regression-gate')
+        for fields in [{'memory_trace': 'yes'}, {'regression_gate': True, 'condition': 'single_agent', 'k': 1,
+                                                  'parallel_experiments': True}]:
+            with self.assertRaises(ValueError):
+                Config(**fields)
+        with self.assertRaises(ValueError):
+            Engine(Config(regression_gate=True), self.task, self.policy, self.events, self.root / 'gated-run')
+
     def test_archive_contains_only_tracked_source(self):
         repo = self.engine.repo
         (repo.path / '.gitignore').write_text('executable\n')

@@ -32,6 +32,10 @@ class Config:
     parallel_experiments: bool = False
     shared_scratchpad: bool = False
     contribution_contracts: bool = False
+    # Opt-in additions (MAS.S62 copy): block merges that lower the visible score,
+    # and keep a bounded per-agent action trace instead of only the latest note.
+    regression_gate: bool = False
+    memory_trace: bool = False
     independent_concurrency: int = 10
     sandbox_concurrency: int = 1
     synthesis_calls: int = 16
@@ -51,6 +55,11 @@ class Config:
             raise ValueError('contribution_contracts must be boolean')
         if self.contribution_contracts and (not self.shared_scratchpad or self.condition != 'voluntary_pooled'):
             raise ValueError('Contribution contracts require voluntary_pooled and shared_scratchpad')
+        for name in ('regression_gate', 'memory_trace'):
+            if type(getattr(self, name)) is not bool:
+                raise ValueError(name + ' must be boolean')
+        if (self.regression_gate or self.memory_trace) and self.condition in BASELINES:
+            raise ValueError('regression_gate and memory_trace apply to market conditions only')
         if type(self.parallel_experiments) is not bool:
             raise ValueError('parallel_experiments must be boolean')
         if type(self.adaptive_tokens) is not bool:
@@ -113,6 +122,9 @@ class Config:
         data = {**asdict(self), 'max_team_size': self.max_team_size}
         if not self.contribution_contracts:
             data.pop('contribution_contracts')  # Preserve legacy disabled serialization.
+        for name in ('regression_gate', 'memory_trace'):
+            if not getattr(self, name):
+                data.pop(name)  # Opt-in additions stay out of legacy manifests when off.
         return data
 
     def estimate(self):

@@ -52,6 +52,8 @@ class Engine:
         self.scratchpad_results = {}
         if config.contribution_contracts and task.data['benchmark'] not in {'programbench', 'fixture'}:
             raise ValueError('This contract version uses existing ProgramBench reference observations')
+        if config.regression_gate and task.data['benchmark'] != 'commit0':
+            raise ValueError('This regression gate version uses commit0 visible test scores')
         self.contracts = (ContractMarket(self.out / 'contracts', self.agents, self.scratchpad, self.emit)
                           if config.contribution_contracts else None)
         if config.condition == 'random_teams':
@@ -273,7 +275,11 @@ class Engine:
                     except (ValueError, TypeError, json.JSONDecodeError) as e:
                         result = {'status': 'invalid_action', 'error': str(e)}
                     msg = self.route_message(a, team.member_ids, reply)
-                    a.memory = msg
+                    if self.cfg.memory_trace:
+                        # Bounded trace of this agent's own actions, not only its latest note.
+                        a.memory = (a.memory + f"\n[r{self.step} s{slot} {tool}:{result.get('status')}] {msg}")[-2000:]
+                    else:
+                        a.memory = msg
                     entry = {'author': a.name, 'tool': tool, 'message': msg,
                              'result': json.dumps(result, ensure_ascii=False)[:4500]}
                     transcript.append(entry)
@@ -324,11 +330,31 @@ class Engine:
         proposal['bid'] = math.fsum(proposal['pledges'].values())
         proposal['participants'] = [n for n in workers if proposal['votes'].get(n)]
         # No-op drafts do not earn path credit. Failed code builds do not enter public state.
+        regressed = self.regressed(check, code_changed)
+        if self.cfg.regression_gate:
+            proposal['regressed'] = regressed
+            if regressed:
+                self.emit('regression_blocked', team=team.team_id, score=check.get('score'),
+                          total=check.get('total'), high_water=self.high_water, denominator=self.denominator)
         proposal['eligible'] = bool(yes > len(members) / 2 and proposal['bid'] > 0 and proposal['participants']
-                                    and ((changed and check.get('build')) or (probes and not code_changed)))
+                                    and ((changed and check.get('build')) or (probes and not code_changed))
+                                    and not regressed)
         self.emit('candidate', **{k: v for k, v in proposal.items() if k != 'source'})
         write_json(directory / 'candidate.json', proposal)
         return proposal
+
+    def regressed(self, check, code_changed):
+        """Opt-in gate: a code change may not score below the public high water mark.
+
+        Ties stay eligible. Before any valid visible score exists nothing can regress.
+        A missing score or a changed test denominator after that counts as a regression.
+        """
+        if not (self.cfg.regression_gate and code_changed and self.task.data['benchmark'] == 'commit0'):
+            return False
+        if self.denominator is None:
+            return False
+        score = check.get('score')
+        return score is None or check.get('total') != self.denominator or score < self.high_water
 
     def apply(self, proposals):
         eligible = [c for c in proposals if c['eligible']]

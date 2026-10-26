@@ -7,6 +7,11 @@ from .config import BASELINES
 PROMPT_REVISION = 'adaptive-response-tokens-5'
 
 def prompt_revision(config):
+    # The regression gate changes one SYSTEM sentence, so it gets its own suffix.
+    return _base_prompt_revision(config) + ('+regression-gate' if config.regression_gate else '')
+
+
+def _base_prompt_revision(config):
     if config.contribution_contracts:
         return 'shared-scratchpad-contribution-contracts-8'
     if config.condition in BASELINES:
@@ -242,6 +247,10 @@ class Policy:
                            'control allowances also double up to that cap. Ordinary test failures or '
                            'low scores do not trigger extensions. Dollar and round limits still apply.')
         system = SYSTEM
+        if self.config.regression_gate:
+            system = system.replace('Score regressions can be accepted. ',
+                                    'A code change that scores below the public high water mark on visible tests '
+                                    'is ineligible; equal scores remain eligible. ')
         if self.config.shared_scratchpad:
             system = system.replace('Other teams cannot see it.', 'Live workspaces are private; completed candidates are shared as artifacts.')
             system = system.replace("Teams execute sequentially within a round; other teams' private code is unavailable.",
