@@ -64,10 +64,15 @@ def preflight(task=None, paid=False):
     return checks
 
 
-def execute(cfg, task, out, *, demo=False, team_evolution=False):
+def execute(cfg, task, out, *, demo=False, team_evolution=False, transport=None, ledger_path=None):
     if not demo:
         variable = 'OPENAI_API_KEY' if cfg.provider == 'openai' else 'OPENROUTER_API_KEY'
         validate_api_key(os.environ.get(variable), variable)
+    transport = dict(transport or {})
+    allowed_transport = {'connect_timeout', 'read_timeout', 'max_retries', 'retry_backoff', 'retry_reserve_cap_usd'}
+    if set(transport) - allowed_transport:
+        raise ValueError('Unknown transport setting')
+    active_ledger = Path(ledger_path).resolve() if ledger_path is not None else LEDGER
     baseline = cfg.condition in BASELINES
     out = Path(out).resolve()
     out.mkdir(parents=True, exist_ok=False)
@@ -101,6 +106,8 @@ def execute(cfg, task, out, *, demo=False, team_evolution=False):
                 'team_manager_sha256': sha(ROOT / 'vendor/hayekmas/adapters/teams/team.py'),
                 'preflight': checks, 'official_score': None,
                 'note': 'Fresh population. Control overhead is measured separately from equal private work allocations.'}
+    if transport:
+        manifest['transport'] = transport
     if baseline:
         manifest['architecture'] = cfg.condition
         manifest['worker_count'] = cfg.worker_count
@@ -128,19 +135,19 @@ def execute(cfg, task, out, *, demo=False, team_evolution=False):
         if team_evolution:
             manifest['demo_scenario'] = 'Scripted growth, departures, and regrouping; not model behavior'
     else:
-        ledger = Ledger(LEDGER, parallel=cfg.parallel_experiments,
+        ledger = Ledger(active_ledger, parallel=cfg.parallel_experiments,
                         parallel_requests=cfg.independent_concurrency if baseline else None)
         ident = uuid.uuid4().hex
         ledger.register(ident, cfg.run_cap_usd)
         manifest['ledger_run'] = ident
-        manifest['campaign_ledger'] = str(LEDGER)
+        manifest['campaign_ledger'] = str(active_ledger)
         client = OpenRouter(cfg.model, ledger, ident,
                             {'prompt': cfg.input_price_cap, 'completion': cfg.output_price_cap}, events.emit, out / 'STOP',
                             reasoning_enabled=cfg.reasoning_enabled, reasoning_effort=cfg.reasoning_effort,
                             provider_ignore=cfg.provider_ignore, structured_actions=cfg.structured_actions,
                             shared_scratchpad=cfg.shared_scratchpad,
                             contribution_contracts=cfg.contribution_contracts,
-                            provider=cfg.provider, prices=cfg.price_table())
+                            provider=cfg.provider, prices=cfg.price_table(), **transport)
         write_json(out / 'manifest.json', manifest)
     policy = Policy(client, cfg, events)
     engine, failure = None, None
@@ -152,7 +159,7 @@ def execute(cfg, task, out, *, demo=False, team_evolution=False):
                     cfg.model, ledger, ident, {'prompt': cfg.input_price_cap, 'completion': cfg.output_price_cap},
                     events.emit, out / 'STOP', reasoning_enabled=cfg.reasoning_enabled,
                     reasoning_effort=cfg.reasoning_effort, provider_ignore=cfg.provider_ignore,
-                    structured_actions=cfg.structured_actions, provider=cfg.provider, prices=cfg.price_table())
+                    structured_actions=cfg.structured_actions, provider=cfg.provider, prices=cfg.price_table(), **transport)
                 return IndependentPolicy(own_client, cfg, events)
             engine = IndependentEngine(cfg, task, policy_factory, events, out,
                                        pool_root=None if demo else ROOT / 'artifacts/baseline-sandbox-leases')
