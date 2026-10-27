@@ -53,7 +53,67 @@ def metrics(state, events):
             'invalid_decisions': sum(e['event'] in {'invalid_action', 'invalid_response'} for e in events),
             'no_publication_rounds': sum(e['event'] == 'no_publication' for e in events),
             'regressions_blocked': sum(e['event'] == 'regression_blocked' for e in events),
+            'market': market_metrics(state, events),
             'swarm': swarm_metrics(state, events)}
+
+
+def ranks(values):
+    order = sorted(range(len(values)), key=lambda i: values[i])
+    out, i = [0.0] * len(values), 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and values[order[j + 1]] == values[order[i]]:
+            j += 1
+        for k in range(i, j + 1):
+            out[order[k]] = (i + j) / 2
+        i = j + 1
+    return out
+
+
+def spearman(pairs):
+    if len(pairs) < 3:
+        return None
+    x, y = ranks([p[0] for p in pairs]), ranks([p[1] for p in pairs])
+    mx, my = sum(x) / len(x), sum(y) / len(y)
+    xx, yy = sum((a - mx) ** 2 for a in x), sum((b - my) ** 2 for b in y)
+    return sum((a - mx) * (b - my) for a, b in zip(x, y)) / math.sqrt(xx * yy) if xx * yy > 0 else None
+
+
+def market_metrics(state, events):
+    """Classic market conditions: do bids track verified gains, merge throughput, rent.
+
+    A candidate's gain is its own visible pass count minus the public count at the start of
+    its round, so it is defined for every eligible candidate, not only for winners.
+    """
+    rounds = max(1, sum(e['event'] == 'snapshot' and e.get('round', -1) >= 0 for e in events))
+    start = {e['round'] + 1: e.get('feedback') or {} for e in events if e['event'] == 'snapshot'}
+    by_round = defaultdict(list)
+    for e in events:
+        if e['event'] != 'candidate' or 'task' in e or not e.get('eligible') or e.get('bid') is None:
+            continue
+        base, check = start.get(e['round'], {}), e.get('check') or {}
+        if base.get('passed') is not None and check.get('passed') is not None and base.get('total') == check.get('total'):
+            by_round[e['round']].append((e['bid'], check['passed'] - base['passed']))
+    ordered = sorted(by_round)
+    half = len(ordered) // 2
+    pooled = lambda rs: [p for r in rs for p in by_round[r]]
+    contested = [by_round[r] for r in ordered if len(by_round[r]) > 1 and len({g for _, g in by_round[r]}) > 1]
+    top = [max(g for b, g in rows if b == max(b for b, _ in rows)) == max(g for _, g in rows) for rows in contested]
+    merges = [e for e in events if e['event'] == 'publication' and 'task' not in e]
+    return {'eligible_candidates_scored': len(pooled(ordered)),
+            'bid_gain_spearman': spearman(pooled(ordered)),
+            'bid_gain_spearman_early': spearman(pooled(ordered[:half])),
+            'bid_gain_spearman_late': spearman(pooled(ordered[half:])),
+            'top_bid_was_top_gain_share': sum(top) / len(top) if top else None,
+            'contested_rounds': len(top),
+            'merges': len(merges), 'merges_per_round': len(merges) / rounds,
+            'three_way_merges': sum(e.get('mode') == '3way' for e in merges),
+            'rejected_merges': dict(Counter(e['reason'].split(':')[0] for e in events
+                                            if e['event'] == 'merge_rejected' and 'task' not in e)),
+            'skipped_for_slots': sum(e['event'] == 'merge_skipped' for e in events),
+            'rent_paid': state.get('rent_paid'),
+            'resting_agent_rounds': sum(len(e['agents']) for e in events
+                                        if e['event'] == 'rest' and e.get('reason') == 'wealth below rent')}
 
 
 def swarm_metrics(state, events):
@@ -64,10 +124,10 @@ def swarm_metrics(state, events):
     merges = [e for e in events if e['event'] == 'publication' and 'task' in e]
     return {'merges': len(merges), 'merges_per_round': len(merges) / rounds,
             'three_way_merges': sum(e.get('mode') == '3way' for e in merges),
-            'rejected_merges': dict(Counter(e['reason'] for e in events if e['event'] == 'merge_rejected')),
+            'rejected_merges': dict(Counter(e['reason'] for e in events if e['event'] == 'merge_rejected' and 'task' in e)),
             'eligible_candidates': sum(e['eligible'] for e in candidates),
             'duplicate_task_claims': sum(n - 1 for n in per_task_round.values() if n > 1),
-            'resting_agent_rounds': sum(len(e['agents']) for e in events if e['event'] == 'rest'),
+            'resting_agent_rounds': sum(len(e['agents']) for e in events if e['event'] == 'rest' and 'open_tasks' in e),
             'invalid_claims': sum(e['event'] == 'invalid_action' and e.get('phase') == 'claim' for e in events),
             'bounties_issued': state.get('bounties_issued'),
             'royalty_share': (sum(e.get('royalty', 0) for e in merges) / state['bounties_issued']

@@ -10,7 +10,6 @@ test that currently passes. Virtual money is issued only when a visible test fli
 to pass in the public repository; authors of fetched artifacts receive a royalty.
 """
 import math
-from pathlib import Path
 
 from hayekmas.adapters.teams.team import Team
 from .engine import Engine
@@ -191,54 +190,13 @@ class SwarmEngine(Engine):
             self.emit('no_publication', reason='Every candidate conflicted or failed verification on the public tree')
 
     def merge(self, c):
-        head = self.repo.version
         before = self.feedback
         before_failing = self.public_failing()
-        if c['base_commit'] == head:
-            # First merge of the round: the candidate tree becomes the public tree, so its check stands.
-            patch = self.repo.replace(Path(c['source']), head)
-            check, mode = c['check'], 'direct'
-            if not patch:
-                self.revert(head)
-                self.emit('merge_rejected', team=c['team'], task=c['task'], mode=mode, reason='no tracked change')
-                return None
-        else:
-            # The scratchpad patch was taken against this round's base; apply it onto the moved head.
-            patch_path = self.scratchpad.root / 'artifacts' / c['shared_artifact'] / 'patch.diff'
-            try:
-                self.repo.git('apply', '--3way', str(patch_path))
-                self.repo.git('add', '--all')
-                patch = self.repo.git('diff', '--cached', '--binary')
-                if not patch:
-                    raise RuntimeError('Patch applied no change on the current head')
-                self.repo.git('commit', '-qm', 'Accepted swarm contribution')
-            except RuntimeError as error:
-                self.revert(head)
-                self.emit('merge_rejected', team=c['team'], task=c['task'], mode='3way', reason='conflict',
-                          detail=str(error)[-600:])
-                return None
-            check = self.task.check(self.repo.path, self.out / 'merges' / f'round-{self.step:02}' / c['team'].replace(':', '-'))
-            mode = '3way'
-        scored = check.get('build') and check.get('score') is not None and check.get('failing') is not None
-        after_failing = set(check['failing']) if scored else None
-        flipped, reason = [], None
-        if after_failing is None:
-            reason = 'merged tree does not build or score'
-        elif before_failing is not None:
-            if check.get('total') != before.get('total'):
-                reason = 'visible test denominator changed'
-            else:
-                newly_failing = sorted(after_failing - before_failing)
-                flipped = sorted(before_failing - after_failing)
-                if newly_failing:
-                    reason = 'breaks passing tests: ' + ', '.join(newly_failing[:5])
-                elif not flipped:
-                    reason = 'no additional test passes'
-        if reason:
-            self.revert(head)
-            self.emit('merge_rejected', team=c['team'], task=c['task'], mode=mode, reason=reason,
-                      score=check.get('score'), total=check.get('total'))
+        result = self.verified_merge(c)
+        if result is None:
             return None
+        check, patch, mode, flipped = result
+        after_failing = set(check['failing'])
         patch_path = self.out / 'patches' / f'round-{self.step:02}-{c["team"].replace(":", "-")}.diff'
         patch_path.parent.mkdir(exist_ok=True)
         patch_path.write_text(patch or '')
@@ -264,10 +222,6 @@ class SwarmEngine(Engine):
         self.emit('publication', **{k: v for k, v in record.items() if k != 'round'})
         self.assert_accounting()
         return record
-
-    def revert(self, head):
-        self.repo.git('reset', '-q', '--hard', head)
-        self.repo.git('clean', '-qfd')
 
     def pay(self, c, flipped, bootstrap, check):
         """Mint virtual money only against verified test flips; split work share, then royalty."""

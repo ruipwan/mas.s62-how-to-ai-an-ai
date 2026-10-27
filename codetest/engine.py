@@ -44,6 +44,7 @@ class Engine:
         self.round_limit = config.rounds
         self.checkpoints = []
         self.burned = self.dividends = self.terminal_issued = 0.0
+        self.rent_paid, self.resting = 0.0, set()
         self.high_water = 0.0
         self.denominator = None
         self.step = -1
@@ -54,6 +55,8 @@ class Engine:
             raise ValueError('This contract version uses existing ProgramBench reference observations')
         if config.regression_gate and task.data['benchmark'] != 'commit0':
             raise ValueError('This regression gate version uses commit0 visible test scores')
+        if (config.merge_slots > 1 or config.task_board) and task.data['benchmark'] not in {'commit0', 'fixture'}:
+            raise ValueError('merge_slots and task_board use per-test visible results: commit0 or the scripted fixture')
         self.contracts = (ContractMarket(self.out / 'contracts', self.agents, self.scratchpad, self.emit)
                           if config.contribution_contracts else None)
         if config.condition == 'random_teams':
@@ -97,6 +100,11 @@ class Engine:
             context['communication_rule'] = 'Public messages and scratchpad notes persist; completed candidate artifacts can be fetched into private workspaces.'
         if self.contracts:
             context['contribution_market'] = self.contracts.observation()
+        if self.cfg.task_board:
+            context['task_board'] = failing_board(self.feedback)
+        if self.cfg.rent:
+            context['rent'] = self.cfg.rent
+            context['resting_agents'] = sorted(self.resting)
         return context
 
     def ask(self, phase, agent, **extra):
@@ -155,7 +163,7 @@ class Engine:
         if not self.cfg.condition.startswith('voluntary') or self.step % self.cfg.membership_every:
             return
         self.teams.invitations.clear()
-        order = list(self.agents)
+        order = [a for a in self.agents if a.name not in self.resting]
         self.rng.shuffle(order)
         roster, proposals, discussion = self.roster(), [], []
         for a in order:
@@ -198,8 +206,32 @@ class Engine:
         self.teams.invitations.clear()
 
     def working_teams(self):
-        """Every agent works each round, solo or in its current team."""
-        return list(self.teams.active_teams(self.step))
+        """Every agent works each round, solo or in its current team; agents resting for rent do not."""
+        teams = list(self.teams.active_teams(self.step))
+        return [t for t in teams if not set(t.member_ids) <= self.resting] if self.resting else teams
+
+    def charge_rent(self):
+        """Opt-in rent: working a round costs wealth. An agent that cannot pay rests this round.
+
+        A resting agent leaves its team and makes no model calls. Payments still reach it, and it
+        works again once its wealth covers the rent. Rent is burned, as in EOM.
+        """
+        if not self.cfg.rent:
+            return
+        self.resting = set()
+        for a in self.agents:
+            if a.wealth >= self.cfg.rent:
+                a.wealth -= self.cfg.rent
+                self.rent_paid += self.cfg.rent
+                continue
+            self.resting.add(a.name)
+            if a.team_tag:
+                old, dissolved = self.teams.leave_team(a)
+                self.emit('leave', agent=a.name, old_team=old, dissolved=dissolved, reason='rent')
+        self.emit('rent', amount=self.cfg.rent, paid=len(self.agents) - len(self.resting))
+        if self.resting:
+            self.emit('rest', agents=sorted(self.resting), reason='wealth below rent')
+        self.assert_accounting()
 
     def restore_protected(self, candidate):
         for rel in self.task.data.get('protected_paths', []):
@@ -383,6 +415,8 @@ class Engine:
         if not eligible:
             self.emit('no_publication', reason='No buildable, changed candidate with majority consent and positive bid')
             return
+        if self.cfg.merge_slots > 1:
+            return self.merge_in_bid_order(eligible)
         best = max(c['bid'] for c in eligible)
         ties = [c for c in eligible if math.isclose(c['bid'], best, abs_tol=1e-10)]
         winner = self.rng.choice(ties)
@@ -393,7 +427,94 @@ class Engine:
         if not patch and not winner['new_probes']:
             self.emit('rejected', team=winner['team'], reason='no_tracked_changes')
             return
-        patch_path = self.out / 'patches' / f'round-{self.step:02}.diff'
+        self.publish(winner, patch, winner['check'], f'round-{self.step:02}')
+
+    def merge_in_bid_order(self, eligible):
+        """merge_slots > 1: the market sets the order, verification decides what counts.
+
+        The highest bid merges first; later candidates are applied as 3-way patches onto the
+        moved head. Each merge must pass at least one more visible test and break none, or it
+        is reverted without charge. Payments chain as before: each merge pays the previous one.
+        """
+        merged = 0
+        for c in sorted(eligible, key=lambda c: (-c['bid'], self.rng.random())):
+            if merged == self.cfg.merge_slots:
+                self.emit('merge_skipped', team=c['team'], bid=c['bid'], reason='no merge slot left this round')
+                continue
+            result = self.verified_merge(c)
+            if result:
+                check, patch, mode, flipped = result
+                self.publish(c, patch, check, f'round-{self.step:02}-' + c['team'].replace(':', '-'),
+                             mode=mode, flipped=flipped)
+                merged += 1
+        if not merged:
+            self.emit('no_publication', reason='Every eligible candidate conflicted or failed verification on the public tree')
+
+    def verified_merge(self, c):
+        """Merge one candidate onto the public head; keep it only if more visible tests pass and none break.
+
+        The first merge of a round replaces the tree, so the candidate's own check stands. Later merges
+        apply its shared patch with git apply --3way and re-check. Returns (check, patch, mode, flipped),
+        or None after reverting the head. Before the package first scores, any scored merge counts.
+        """
+        head, before = self.repo.version, self.feedback
+        before_failing = (set(before['failing']) if before.get('score') is not None
+                          and before.get('failing') is not None else None)
+        tag = {'task': c['task']} if 'task' in c else {}
+        if c['base_commit'] == head:
+            patch = self.repo.replace(Path(c['source']), head)
+            check, mode = c['check'], 'direct'
+            if not patch:
+                self.revert(head)
+                self.emit('merge_rejected', team=c['team'], **tag, mode=mode, reason='no tracked change')
+                return None
+        else:
+            try:
+                if not c.get('shared_artifact'):
+                    raise RuntimeError('No shared patch for this candidate')
+                patch_path = self.scratchpad.root / 'artifacts' / c['shared_artifact'] / 'patch.diff'
+                self.repo.git('apply', '--3way', str(patch_path))
+                self.repo.git('add', '--all')
+                patch = self.repo.git('diff', '--cached', '--binary')
+                if not patch:
+                    raise RuntimeError('Patch applied no change on the current head')
+                self.repo.git('commit', '-qm', 'Accepted verified contribution')
+            except RuntimeError as error:
+                self.revert(head)
+                self.emit('merge_rejected', team=c['team'], **tag, mode='3way', reason='conflict',
+                          detail=str(error)[-600:])
+                return None
+            check = self.task.check(self.repo.path, self.out / 'merges' / f'round-{self.step:02}' / c['team'].replace(':', '-'))
+            mode = '3way'
+        scored = check.get('build') and check.get('score') is not None and check.get('failing') is not None
+        after_failing = set(check['failing']) if scored else None
+        flipped, reason = [], None
+        if after_failing is None:
+            reason = 'merged tree does not build or score'
+        elif before_failing is not None:
+            if check.get('total') != before.get('total'):
+                reason = 'visible test denominator changed'
+            else:
+                newly_failing = sorted(after_failing - before_failing)
+                flipped = sorted(before_failing - after_failing)
+                if newly_failing:
+                    reason = 'breaks passing tests: ' + ', '.join(newly_failing[:5])
+                elif not flipped:
+                    reason = 'no additional test passes'
+        if reason:
+            self.revert(head)
+            self.emit('merge_rejected', team=c['team'], **tag, mode=mode, reason=reason,
+                      score=check.get('score'), total=check.get('total'))
+            return None
+        return check, patch, mode, flipped
+
+    def revert(self, head):
+        self.repo.git('reset', '-q', '--hard', head)
+        self.repo.git('clean', '-qfd')
+
+    def publish(self, winner, patch, check, patch_name, **extra):
+        """Settle one accepted contribution: pledges, bucket brigade, public feedback and dividend."""
+        patch_path = self.out / 'patches' / f'{patch_name}.diff'
         patch_path.parent.mkdir(exist_ok=True)
         patch_path.write_text(patch or '')
         for name, pledge in winner['pledges'].items():
@@ -410,7 +531,7 @@ class Engine:
         before = self.feedback
         self.bank.extend(winner['new_probes'])
         (self.out / 'probes.jsonl').write_text(''.join(json.dumps(x) + '\n' for x in self.bank))
-        self.feedback = winner['check']
+        self.feedback = check
         if self.task.data['benchmark'] == 'programbench':
             self.feedback = {**self.feedback, **probe_score(self.task, self.repo.path, self.bank)}
         dividend = 0.0
@@ -434,13 +555,15 @@ class Engine:
                   'bid': winner['bid'], 'commit': self.repo.version, 'before': visible(before),
                   'after': visible(self.feedback),
                   'dividend': dividend, 'patch': str(patch_path.relative_to(self.out)),
-                  'new_probe_count': len(winner['new_probes']), 'changed_paths': winner.get('changed_paths', [])}
+                  'new_probe_count': len(winner['new_probes']), 'changed_paths': winner.get('changed_paths', []),
+                  **extra}
         self.history.append(record)
         self.emit('publication', **{k: v for k, v in record.items() if k != 'round'})
         self.assert_accounting()
 
     def assert_accounting(self):
-        expected = self.cfg.k * self.cfg.initial_wealth - self.burned + self.dividends + self.terminal_issued
+        expected = (self.cfg.k * self.cfg.initial_wealth - self.burned - self.rent_paid
+                    + self.dividends + self.terminal_issued)
         actual = math.fsum(a.wealth for a in self.agents) + (self.contracts.escrow if self.contracts else 0)
         if any(a.wealth < -1e-8 for a in self.agents) or not math.isclose(expected, actual, abs_tol=1e-7):
             raise AssertionError('Wealth conservation failed')
@@ -466,6 +589,7 @@ class Engine:
             if self.contracts:
                 self.contracts.expire(self.step)
                 self.assert_accounting()
+            self.charge_rent()
             self.form()
             self.emit('membership', agents=self.roster())
             teams = self.working_teams()
@@ -532,6 +656,7 @@ class Engine:
                                             'escrow': self.contracts.escrow}} if self.contracts else {}),
                 'snapshots': self.snapshots, 'burned': self.burned, 'progress_dividends': self.dividends,
                 'terminal_issued': self.terminal_issued, 'public_feedback': self.feedback,
+                **({'rent_paid': self.rent_paid, 'resting': sorted(self.resting)} if self.cfg.rent else {}),
                 'probe_count': len(self.bank), 'model_calls': self.policy.calls}
 
 
@@ -542,6 +667,22 @@ def visible(check):
     Classic conditions never showed them, so they stay internal unless a flag shows them.
     """
     return {k: v for k, v in check.items() if k != 'failing'}
+
+
+def failing_board(feedback, modules=40, samples=5):
+    """Opt-in task board: failing visible tests grouped by test module, most failing first."""
+    if feedback.get('score') is None or feedback.get('failing') is None:
+        return {'available': False, 'reason': 'The public package does not yet build and score its visible tests.'}
+    rows = {}
+    for test in sorted(feedback['failing']):
+        module, _, name = test.partition('::')
+        row = rows.setdefault(module, {'module': module, 'failing': 0, 'sample_tests': []})
+        row['failing'] += 1
+        if len(row['sample_tests']) < samples:
+            row['sample_tests'].append(name)
+    ordered = sorted(rows.values(), key=lambda r: (-r['failing'], r['module']))
+    return {'available': True, 'failing_tests': len(feedback['failing']), 'modules': ordered[:modules],
+            'more_modules': max(0, len(ordered) - modules)}
 
 
 def tree_digest(root):

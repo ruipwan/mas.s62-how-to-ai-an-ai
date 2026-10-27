@@ -1,0 +1,13 @@
+{
+  "k": 8,
+  "rounds": 4,
+  "max_rounds": 4,
+  "work_calls": 4,
+  "membership_every": 1,
+  "condition": "voluntary_pooled",
+  "shared_scratchpad": true,
+  "merge_slots": 8,
+  "rent": 0.25,
+  "task_board": true,
+  "seed": 7
+}

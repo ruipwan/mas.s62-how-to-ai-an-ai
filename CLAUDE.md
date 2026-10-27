@@ -4,10 +4,12 @@ Read `docs/HANDOFF.md` first: it is the full record of the design discussion, th
 
 ## What this is
 
-Ruipeng Wang's copy of Baiyu Zhu's `bobyhaha/Team-Economy` (MAS.S62 group project, MIT Media Lab, Fall 2026): a playground where coding agents form teams, work in private workspaces, share a scratchpad and integrate contributions into one public repository. Two additions live on the `swarm` branch:
+Ruipeng Wang's copy of Baiyu Zhu's `bobyhaha/Team-Economy` (MAS.S62 group project, MIT Media Lab, Fall 2026): a playground where coding agents form teams, work in private workspaces, share a scratchpad and integrate contributions into one public repository. Additions live on the `swarm` branch and on `claude/new-session-jku7c5`:
 
 - Opt in flags `regression_gate` and `memory_trace` (commit `82e1ec9`).
 - `condition: "swarm"`: task board from failing visible tests, one claim call per woken agent, verified 3 way merge queue, bounties only for test flips (commit `b49dc18`, `codetest/swarm.py`).
+- Verified market, the main line now: opt in flags `merge_slots`, `rent` and `task_board` on the classic engine, each one ablation (see README "Verified market"). Configs `configs/k10-gpt6-luna-scratchpad-{gate,merge,rent,board,market}.json`, demo `configs/demo-market.json`, tests `tests/test_market.py`.
+- Per test ids (`failing`) are internal: `engine.visible()` strips them from everything agents see and from logs; only `task_board` shows them, grouped.
 
 ## Working rules
 

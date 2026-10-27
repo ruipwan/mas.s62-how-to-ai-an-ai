@@ -4,7 +4,7 @@ A Python playground for coding agents that form teams, work in private workspace
 
 ## This copy: MAS.S62 How to AI an AI for (Almost) Anything
 
-Copied with full history from [bobyhaha/Team-Economy](https://github.com/bobyhaha/Team-Economy) (commit `58ebbf2`, Baiyu Zhu). Two opt-in changes are added on top. Both default to off, so existing configs, manifests and prompt revisions are unchanged.
+Copied with full history from [bobyhaha/Team-Economy](https://github.com/bobyhaha/Team-Economy) (commit `58ebbf2`, Baiyu Zhu). Everything added on top is opt in and defaults to off, so existing configs, manifests and prompt revisions are unchanged.
 
 | Flag | What it does |
 | --- | --- |
@@ -36,6 +36,36 @@ python run.py run --config configs/k10-gpt6-luna-swarm.json --task datasets/comm
 ```
 
 `metrics.json` gains a `swarm` block: merges per round, 3-way merges, rejected merges by reason, duplicate task claims, resting agent rounds, bounties issued and the royalty share. Suggested comparisons: swarm against `voluntary_pooled` plus scratchpad at k = 5, 10 and 20 (scaling curve), a same-dollar k = 1 baseline, and the three ablations that the swarm bundles (merge queue only, bounties only, board only). Swarm currently supports commit0 and the scripted fixture; ProgramBench would need a fixed reference probe pool to define flips. Unit tests: `tests/test_swarm.py`.
+
+### Verified market (main line)
+
+The swarm removes the market. This variant keeps the Economy of Minds skeleton of the classic conditions, where teams bid for the right to publish, each publication pays the previous one (bucket brigade) and progress earns a dividend, and adds three opt-in flags that bring in what the swarm does better. Each flag is one ablation, and all default to off.
+
+| Flag | Swarm advantage | Change on the classic engine |
+| --- | --- | --- |
+| `"merge_slots": n` (n > 1) | Merges per round scale with the population | Eligible candidates merge in bid order, highest first. The first replaces the tree; later ones are applied as 3-way patches onto the moved head. Every merge is re-checked and kept only if at least one more visible test passes and no passing test fails; a rejected merge is reverted and not charged. Each merge pays the one before it. Needs `shared_scratchpad` and commit0 (or the fixture). |
+| `"rent": r` | Idle agents cost nothing | Working a round costs `r` wealth, burned. An agent below the rent rests: it leaves its team and makes no calls. Payments still reach it, and it works again once it can pay. Wealth now has consequences, as in EOM. |
+| `"task_board": true` | Stigmergy | Agents see the failing visible tests grouped by module (at most 40 modules, 5 sample names each). Evidence for choosing work, not an assignment. |
+
+The market orders, verification decides. Prompt revisions get `+merge-slots-n`, `+rent` and `+task-board` suffixes. Per-test ids stay internal otherwise: classic agents see counts only, as upstream.
+
+```bash
+python run.py demo --config configs/demo-market.json --out runs/demo-market
+```
+
+Paid ablations on TinyDB (k = 10, same model and seed as `k10-gpt6-luna-scratchpad.json`, which is the baseline):
+
+```bash
+for v in "" -gate -merge -rent -board -market; do
+  python run.py run --config configs/k10-gpt6-luna-scratchpad$v.json --task datasets/commit0-tinydb/task.json --out runs/tinydb-k10$v
+done
+```
+
+`-market` turns on all four (gate, `merge_slots` 10, `rent` 0.1, task board). Rent 0.1 lets an agent with no income work about ten rounds; one TinyDB test is worth a dividend of about 0.05, so producers cover it easily. `metrics.json` gains a `market` block for every classic run, the baseline included:
+
+- `bid_gain_spearman` (and `_early`, `_late`): rank correlation between each eligible candidate's bid and its own verified gain, the visible pass count minus the public count at the start of its round. A rise from early to late means the market learns to price quality.
+- `top_bid_was_top_gain_share`: in rounds with competing candidates, how often the highest bid also had the highest gain.
+- `merges_per_round`, `three_way_merges`, `rejected_merges`, `skipped_for_slots`, `rent_paid`, `resting_agent_rounds`.
 
 ## Free quick start
 

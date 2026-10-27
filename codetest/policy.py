@@ -7,8 +7,10 @@ from .config import BASELINES
 PROMPT_REVISION = 'adaptive-response-tokens-5'
 
 def prompt_revision(config):
-    # The regression gate changes one SYSTEM sentence, so it gets its own suffix.
-    return _base_prompt_revision(config) + ('+regression-gate' if config.regression_gate else '')
+    # Each opt-in rule changes SYSTEM text, so each gets its own suffix.
+    return (_base_prompt_revision(config) + ('+regression-gate' if config.regression_gate else '')
+            + (f'+merge-slots-{config.merge_slots}' if config.merge_slots > 1 else '')
+            + ('+rent' if config.rent else '') + ('+task-board' if config.task_board else ''))
 
 
 def _base_prompt_revision(config):
@@ -185,6 +187,33 @@ Omitted channel means team. Only messages are shared; private code remains priva
 }
 
 
+MERGE_RULES = (
+    ("Only the winning contribution enters the next round's shared source; unpublished\n"
+     'private code is not automatically merged.',
+     'Up to {slots} contributions per round enter the shared source, highest bid first; later\n'
+     'ones are applied as 3-way patches onto the moved head. Unpublished private code is\n'
+     'not automatically merged.'),
+    ('The highest positive eligible bid wins the right to publish a contribution.',
+     'Eligible candidates are merged in order of positive bid, highest first.'),
+    ('A failed build/apply is rejected without charge.',
+     'Every merge is re-checked on the public head and kept only if at least one more\n'
+     'visible test passes and no passing test fails; a rejected merge is not charged.'),
+    ('Score regressions can be accepted. ', ''),
+)
+
+
+def market_rules(system, slots):
+    """merge_slots > 1 rewrites the SYSTEM sentences about one winner per round."""
+    for old, new in MERGE_RULES:
+        # The regression gate may already have replaced the last sentence.
+        if old not in system and old.startswith('Score regressions'):
+            continue
+        if old not in system:
+            raise ValueError('SYSTEM text changed; update MERGE_RULES')
+        system = system.replace(old, new.format(slots=slots))
+    return system
+
+
 class Policy:
     def __init__(self, client, config, events):
         self.client, self.config, self.events = client, config, events
@@ -287,6 +316,17 @@ class Policy:
             system = system.replace('Score regressions can be accepted. ',
                                     'A code change that scores below the public high water mark on visible tests '
                                     'is ineligible; equal scores remain eligible. ')
+        if self.config.merge_slots > 1:
+            system = market_rules(system, self.config.merge_slots)
+        if self.config.rent:
+            system += (f'\nRENT: Working a round costs {self.config.rent:g} wealth, paid at the start of the round '
+                       'and burned. An agent whose wealth is below the rent rests that round: no calls, no team, '
+                       'no ballot. Payments still reach a resting agent; it works again once its wealth covers '
+                       'the rent. resting_agents lists who rests this round.')
+        if self.config.task_board:
+            system += ('\nTASK BOARD: task_board lists the public repository\'s failing visible tests grouped by '
+                       'test module, most failing first. It is shared evidence for choosing work, not an '
+                       'assignment or a lock.')
         if self.config.shared_scratchpad:
             system = system.replace('Other teams cannot see it.', 'Live workspaces are private; completed candidates are shared as artifacts.')
             system = system.replace("Teams execute sequentially within a round; other teams' private code is unavailable.",

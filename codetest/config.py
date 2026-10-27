@@ -36,6 +36,12 @@ class Config:
     # and keep a bounded per-agent action trace instead of only the latest note.
     regression_gate: bool = False
     memory_trace: bool = False
+    # Verified market, opt-in on the classic engine. merge_slots > 1 merges eligible candidates in
+    # bid order, each verified on the moving public head; rent makes working a round cost wealth;
+    # task_board shows the failing visible tests grouped by module.
+    merge_slots: int = 1
+    rent: float = 0.0
+    task_board: bool = False
     # Swarm condition: failing visible tests form a task board; agents claim tasks,
     # verified merges pay bounties. Money is issued only against test flips.
     crowding_cap: int = 2
@@ -66,6 +72,14 @@ class Config:
                 raise ValueError(name + ' must be boolean')
         if (self.regression_gate or self.memory_trace) and self.condition in BASELINES:
             raise ValueError('regression_gate and memory_trace apply to market conditions only')
+        if type(self.merge_slots) is not int or self.merge_slots < 1:
+            raise ValueError('merge_slots must be a positive integer')
+        if type(self.task_board) is not bool:
+            raise ValueError('task_board must be boolean')
+        if (self.merge_slots > 1 or self.rent or self.task_board) and self.condition in BASELINES | {'swarm'}:
+            raise ValueError('merge_slots, rent and task_board apply to the classic market conditions')
+        if self.merge_slots > 1 and (not self.shared_scratchpad or self.contribution_contracts):
+            raise ValueError('merge_slots > 1 applies shared candidate patches: it needs shared_scratchpad and no contracts')
         if self.condition == 'swarm':
             if not self.shared_scratchpad or self.contribution_contracts or self.regression_gate:
                 raise ValueError('Swarm requires shared_scratchpad; contracts and the bid-era regression gate do not apply')
@@ -114,7 +128,7 @@ class Config:
             raise ValueError('seed must be a nonnegative integer')
         for name in ('initial_wealth', 'progress_alpha', 'terminal_reward', 'fixed_bid',
                      'run_cap_usd', 'input_price_cap', 'output_price_cap',
-                     'bounty_base', 'bounty_growth', 'royalty_rate'):
+                     'bounty_base', 'bounty_growth', 'royalty_rate', 'rent'):
             n = getattr(self, name)
             if type(n) not in (int, float) or not math.isfinite(n) or n < 0:
                 raise ValueError(name + ' must be finite and nonnegative')
@@ -136,9 +150,11 @@ class Config:
         data = {**asdict(self), 'max_team_size': self.max_team_size}
         if not self.contribution_contracts:
             data.pop('contribution_contracts')  # Preserve legacy disabled serialization.
-        for name in ('regression_gate', 'memory_trace'):
+        for name in ('regression_gate', 'memory_trace', 'rent', 'task_board'):
             if not getattr(self, name):
                 data.pop(name)  # Opt-in additions stay out of legacy manifests when off.
+        if self.merge_slots == 1:
+            data.pop('merge_slots')
         if self.condition != 'swarm':
             for name in ('crowding_cap', 'bounty_base', 'bounty_growth', 'royalty_rate'):
                 data.pop(name)

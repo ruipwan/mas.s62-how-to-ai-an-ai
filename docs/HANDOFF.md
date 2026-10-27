@@ -72,16 +72,23 @@ Commit `b49dc18` "Add the swarm condition": `condition: "swarm"` (requires `shar
 6. Separate run for `memory_trace` and for `regression_gate` on the classic condition.
 7. Later: wealth objective versus society objective; fixed strategy adversaries; evolution between episodes; report Gini, royalty share, verified progress per token.
 
-## 7. Repository and delivery state at handoff
+## 7. Repository and delivery state
 
-- Local branch layout: `main` = Baiyu's `58ebbf2`; `swarm` = `82e1ec9` + `b49dc18` (+ this handoff commit). Remote `upstream` = https://github.com/bobyhaha/Team-Economy.git. Intended remote `origin` = https://github.com/ruipwan/mas.s62-how-to-ai-an-ai.git.
-- The Cowork session that produced this could not push: its GitHub proxy only injects credentials for repositories attached to the session, and neither repository was attached. A workaround was started through the GitHub web UI: `.github/workflows/bootstrap.yml` was committed to `main` of `ruipwan/mas.s62-how-to-ai-an-ai`. It triggers when a file named `repo.bundle` is pushed, unpacks it, and force pushes `main` and `swarm` from the bundle (which also removes the workflow and the bundle from `main`). The bundle upload itself was not completed.
-- Fastest way to finish from Claude Code: in a checkout of this repository run `git remote add origin https://github.com/ruipwan/mas.s62-how-to-ai-an-ai.git && git push --force -u origin main swarm`. If the bootstrap workflow and bundle are still on GitHub `main` afterwards, the force push has replaced them; nothing else to clean.
-- Then open a PR to Baiyu's repo: push `swarm` to `upstream` (if collaborator) or to a fork, base `main`, compare `swarm`.
-- Before paid runs: `python -m unittest discover -s tests -v`; swarm needs Docker, prepared commit0 data and `OPENROUTER_API_KEY`, as in the README.
+- GitHub `ruipwan/mas.s62-how-to-ai-an-ai` (pushed 2026-10-27 from Claude Code on the web): `main` = Baiyu's `58ebbf2` (the bootstrap workflow commit was replaced by a force push, as planned); `swarm` = the handoff state `4dd6520`; `claude/new-session-jku7c5` = `swarm` plus the session 2 commits in section 9. Upstream: https://github.com/bobyhaha/Team-Economy.
+- Planned PRs to Baiyu's repo: first only the regression gate and memory trace (small, answers "bid is not always optimal"); the verified market after the k = 10 ablations have data. The swarm stays here as a comparison condition.
+- Before paid runs: `python -m unittest discover -s tests -v`. Paid runs need Docker, prepared commit0 data and `OPENROUTER_API_KEY`, as in the README.
 
 ## 8. Working agreements with Ruipeng
 
 - Principle for implementation: choose the simple, efficient option; keep the classic conditions untouched so A/B comparisons stay valid; new behavior behind opt in flags or a new condition.
 - Replies in Chinese with English technical terms; direct and action first; few bullet points; never use dashes as punctuation in prose or commit messages (use commas and periods).
 - Verify numbers against sources; say plainly what was not run or not verified.
+
+## 9. Session 2 (Claude Code on the web, 2026-10-27)
+
+- Restored the bundle and pushed the branches (section 7). Free checks: full unit suite, scripted demos, `plan` for the paid configs. The cloud environment could not run paid experiments: no `OPENROUTER_API_KEY`, and its network policy denied `openrouter.ai` and `datasets-server.huggingface.co` (needed by `prepare commit0`). Docker works there after starting `dockerd`.
+- Review of the swarm commit found a leak into the classic conditions: `junit()` started returning per test ids (`failing`), which reached every agent through `public_feedback` and the ballot's `candidate_check`, up to 201 ids per observation on TinyDB, under an unchanged prompt revision. Fixed in `190dedb` with `engine.visible()`; the classic scripted demo again matches upstream `main` event for event apart from two added log fields, and the exported submission is identical.
+- Found and fixed a latent race in `Repository.replace` (`d22f690`): `copy_source` keeps timestamps, so a same size rewrite could match git's cached stat data and be dropped. It made the swarm full run test fail for some hash seeds, and it fails on `4dd6520` too.
+- Design discussion: the classic engine is the faithful Economy of Minds / Hayek machine skeleton (bid for control, bucket brigade, environment dividend) but without the half that gives money consequences (rent, bankruptcy, births are in `vendor/` but not wired). Its concrete failures are an auction blind to verified quality (69 vs 48 passing example), one write slot per round (k = 20 at 29%), and costless bids. The swarm fixes these by dropping the market, which also bundles five mechanisms into one A/B. Decision: keep the EOM skeleton and add the swarm's advantages as separate flags, so each is one ablation.
+- Implemented the verified market: `merge_slots`, `rent`, `task_board` (README "Verified market"). Swarm's merge code was moved into `Engine.verified_merge()` and is shared. New `market` metrics measure whether bids track each candidate's verified gain, early versus late, for every classic run including the baseline.
+- Revised experiment plan, TinyDB k = 10, same model and seed: baseline `k10-gpt6-luna-scratchpad`, then `-gate`, `-merge`, `-rent`, `-board`, `-market` (all). About $1 to $2 each. Then the k scaling curve for the best variant against the baseline and the swarm. Open ended phase after that: wire `vendor/hayekmas/adapters/teams/evolution.py` (bankruptcy removal, births by mutating the richest agent's strategy) across several commit0 repositories and evaluate on a held out repository, so evolved behavior must still cash out in verified test flips.
