@@ -115,6 +115,16 @@ python run.py evaluate runs/my-tinydb
 python run.py serve runs/my-tinydb --port 8795
 ```
 
+### OpenAI directly
+
+`"provider": "openai"` sends the same requests to `api.openai.com` with `OPENAI_API_KEY` instead of OpenRouter; `openai/gpt-6-luna` becomes `gpt-6-luna`. OpenAI returns token usage, not cost, so the ledger charges usage at `input_price`, `cached_input_price` and `output_price` (USD per million tokens), which may not exceed the price caps used for reservations. `cached_input_price` defaults to `input_price`, so recorded spend is an upper bound until the cached price is confirmed. `configs/openai/` holds the six k = 10 configs with this route at $0.10 input and $0.50 output, the GPT-6 Luna list price reported at launch; check it on OpenAI's pricing page before paid runs.
+
+```bash
+export OPENAI_API_KEY=...   # from your secret manager
+python run.py run --config configs/openai/k10-gpt6-luna-scratchpad.json --task datasets/commit0-tinydb/task.json --out runs/tinydb-k10
+python run.py run --config configs/openai/k10-gpt6-luna-scratchpad-market.json --task datasets/commit0-tinydb/task.json --out runs/tinydb-k10-market
+```
+
 TinyDB uses adapted visible development tests, not a hidden generalization score. Preparation downloads data; `run` makes paid calls. The scripted demo and offline unit tests do neither.
 
 ## Budget and stopping

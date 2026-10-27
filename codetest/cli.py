@@ -39,7 +39,7 @@ def config(path=None):
 def preflight(task=None, paid=False):
     checks = {'python': sys.version.split()[0], 'host': platform.platform(),
               'git': bool(shutil.which('git')), 'docker_cli': bool(shutil.which('docker')),
-              'api_key_present': bool(os.environ.get('OPENROUTER_API_KEY'))}
+              'api_key_present': bool(os.environ.get('OPENROUTER_API_KEY') or os.environ.get('OPENAI_API_KEY'))}
     if checks['docker_cli']:
         try:
             info = run(['docker', 'info', '--format', '{{json .}}'], timeout=15)
@@ -135,7 +135,8 @@ def execute(cfg, task, out, *, demo=False, team_evolution=False):
                             reasoning_enabled=cfg.reasoning_enabled, reasoning_effort=cfg.reasoning_effort,
                             provider_ignore=cfg.provider_ignore, structured_actions=cfg.structured_actions,
                             shared_scratchpad=cfg.shared_scratchpad,
-                            contribution_contracts=cfg.contribution_contracts)
+                            contribution_contracts=cfg.contribution_contracts,
+                            provider=cfg.provider, prices=cfg.price_table())
         write_json(out / 'manifest.json', manifest)
     policy = Policy(client, cfg, events)
     engine, failure = None, None
@@ -147,7 +148,7 @@ def execute(cfg, task, out, *, demo=False, team_evolution=False):
                     cfg.model, ledger, ident, {'prompt': cfg.input_price_cap, 'completion': cfg.output_price_cap},
                     events.emit, out / 'STOP', reasoning_enabled=cfg.reasoning_enabled,
                     reasoning_effort=cfg.reasoning_effort, provider_ignore=cfg.provider_ignore,
-                    structured_actions=cfg.structured_actions)
+                    structured_actions=cfg.structured_actions, provider=cfg.provider, prices=cfg.price_table())
                 return IndependentPolicy(own_client, cfg, events)
             engine = IndependentEngine(cfg, task, policy_factory, events, out,
                                        pool_root=None if demo else ROOT / 'artifacts/baseline-sandbox-leases')

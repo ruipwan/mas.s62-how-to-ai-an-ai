@@ -15,7 +15,7 @@ Ruipeng Wang's copy of Baiyu Zhu's `bobyhaha/Team-Economy` (MAS.S62 group projec
 
 - Keep the classic conditions (`solo`, `random_teams`, `voluntary_fixed`, `voluntary_pooled`, baselines) behaviorally unchanged; new behavior goes behind a flag or a new condition so A/B runs on the same task, model and seed stay valid.
 - Prefer the simple, efficient implementation. Reuse the vendored `hayekmas` code where it already exists (rent, bankruptcy, births, coordination fee, wealth objective are there but not wired into `codetest/`).
-- Run `python -m unittest discover -s tests -v` before any paid run. Paid runs need Docker, prepared task data and `OPENROUTER_API_KEY`; the ledger caps spend (see README).
+- Run `python -m unittest discover -s tests -v` before any paid run. Paid runs need Docker, prepared task data and `OPENROUTER_API_KEY`, or `OPENAI_API_KEY` with the configs in `configs/openai/` (`"provider": "openai"`); the ledger caps spend (see README).
 - `main` stays equal to upstream `main`; put work on `swarm` or a new branch and open PRs against `bobyhaha/Team-Economy`.
 - Prose, commit messages and docs: no dashes as punctuation; commas and periods instead. Replies to Ruipeng in Chinese with English technical terms, direct, few bullets.
 

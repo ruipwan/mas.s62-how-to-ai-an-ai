@@ -214,8 +214,26 @@ class Ledger:
         return {'call_id': ident, 'retained_usd': row['reserved'], **receipt}
 
 
+URLS = {'openrouter': 'https://openrouter.ai/api/v1/chat/completions',
+        'openai': 'https://api.openai.com/v1/chat/completions'}
+
+
 class OpenRouter:
-    def __init__(self, model, ledger, run, caps, event, stop, *, reasoning_enabled=None, reasoning_effort=None, provider_ignore=(), structured_actions=False, shared_scratchpad=False, contribution_contracts=False):
+    """Chat completions with a ledger reservation before every send; OpenRouter or OpenAI directly.
+
+    OpenRouter reports each call's cost. OpenAI reports token usage only, so the cost is computed
+    at the configured list prices, which never exceed the caps used for the reservation.
+    """
+    def __init__(self, model, ledger, run, caps, event, stop, *, reasoning_enabled=None, reasoning_effort=None, provider_ignore=(), structured_actions=False, shared_scratchpad=False, contribution_contracts=False,
+                 provider='openrouter', prices=None):
+        if provider not in URLS:
+            raise ValueError('Unknown provider')
+        self.provider, self.prices = provider, prices
+        if provider == 'openai':
+            model = model.removeprefix('openai/')
+            if not prices or any(money(prices[k]) > money(caps[c]) for k, c in
+                                 (('prompt', 'prompt'), ('cached', 'prompt'), ('completion', 'completion'))):
+                raise ValueError('OpenAI prices are required and may not exceed the price caps')
         self.model, self.ledger, self.run = model, ledger, run
         self.caps, self.event, self.stop = caps, event, Path(stop)
         self.reasoning_enabled = reasoning_enabled
@@ -224,9 +242,10 @@ class OpenRouter:
         self.shared_scratchpad = shared_scratchpad
         self.contribution_contracts = contribution_contracts
         self.last_completion = {}
-        self.key = os.environ.get("OPENROUTER_API_KEY")
+        variable = 'OPENAI_API_KEY' if provider == 'openai' else 'OPENROUTER_API_KEY'
+        self.key = os.environ.get(variable)
         if not self.key:
-            raise ValueError("Set OPENROUTER_API_KEY in the environment")
+            raise ValueError(f"Set {variable} in the environment")
         for key in ("prompt", "completion"):
             if money(caps[key]) <= 0:
                 raise ValueError("Provider price ceilings must be positive")
@@ -258,22 +277,28 @@ class OpenRouter:
                        waited_seconds=round(time.monotonic() - waiting_since, 3))
         self.event("api_reserved", call_id=ident, phase=phase, agent=agent, reserved_usd=reserve,
                    max_tokens=max_tokens)
-        payload = {"model": self.model, "messages": messages, "max_tokens": max_tokens,
-                   "stream": False, "response_format": {"type": "json_object"},
-                   "provider": {"require_parameters": True, "allow_fallbacks": False,
-                                "sort": "price", "max_price": {**self.caps, "request": 0}}}
-        if self.reasoning_enabled is not None:
-            payload['reasoning'] = {'enabled': self.reasoning_enabled}
-        if self.reasoning_effort is not None:
-            payload.setdefault('reasoning', {})['effort'] = self.reasoning_effort
-        if self.provider_ignore:
-            payload['provider']['ignore'] = list(self.provider_ignore)
+        if self.provider == 'openai':
+            payload = {"model": self.model, "messages": messages, "max_completion_tokens": max_tokens,
+                       "stream": False, "store": False, "response_format": {"type": "json_object"}}
+            if self.reasoning_effort is not None:
+                payload['reasoning_effort'] = self.reasoning_effort
+        else:
+            payload = {"model": self.model, "messages": messages, "max_tokens": max_tokens,
+                       "stream": False, "response_format": {"type": "json_object"},
+                       "provider": {"require_parameters": True, "allow_fallbacks": False,
+                                    "sort": "price", "max_price": {**self.caps, "request": 0}}}
+            if self.reasoning_enabled is not None:
+                payload['reasoning'] = {'enabled': self.reasoning_enabled}
+            if self.reasoning_effort is not None:
+                payload.setdefault('reasoning', {})['effort'] = self.reasoning_effort
+            if self.provider_ignore:
+                payload['provider']['ignore'] = list(self.provider_ignore)
         if self.structured_actions:
             from .actions import action_schema
             payload['response_format'] = {'type': 'json_schema', 'json_schema': {
                 'name': phase + '_action', 'strict': True, 'schema': action_schema(phase, self.shared_scratchpad, self.contribution_contracts)}}
         try:
-            response = requests.post("https://openrouter.ai/api/v1/chat/completions",
+            response = requests.post(URLS[self.provider],
                                      headers={"Authorization": "Bearer " + self.key},
                                      json=payload, timeout=(15, 180), allow_redirects=False)
             if response.status_code != 200:
@@ -281,12 +306,12 @@ class OpenRouter:
                 detail = response.text[:2000].replace(self.key, '[REDACTED]')
                 self.event('api_http_error', call_id=ident, status=response.status_code,
                            retry_after=response.headers.get('Retry-After'), detail=detail)
-                raise RuntimeError(f"OpenRouter HTTP {response.status_code}; no retry")
+                raise RuntimeError(f"{self.provider} HTTP {response.status_code}; no retry")
             data = response.json()
             usage = data.get("usage") or {}
-            cost = money(usage.get("cost"))
+            cost = self.price(usage) if self.provider == 'openai' else money(usage.get("cost"))
             receipt = {"id": data.get("id"), "model": data.get("model"),
-                       "provider": data.get("provider"), "usage": usage,
+                       "provider": 'openai' if self.provider == 'openai' else data.get("provider"), "usage": usage,
                        "max_tokens": max_tokens,
                        "finish_reason": (data.get("choices") or [{}])[0].get("finish_reason")}
             self.ledger.settle(ident, cost, receipt)
@@ -305,3 +330,13 @@ class OpenRouter:
             self.ledger.uncertain(ident)
             self.event("api_stopped", call_id=ident, phase=phase, agent=agent)
             raise
+
+    def price(self, usage):
+        """OpenAI cost from token usage; reasoning tokens are part of completion_tokens."""
+        prompt, completion = usage.get('prompt_tokens'), usage.get('completion_tokens')
+        cached = (usage.get('prompt_tokens_details') or {}).get('cached_tokens') or 0
+        if any(type(n) is not int or n < 0 for n in (prompt, completion, cached)):
+            raise RuntimeError('OpenAI response has no token usage; charged call, no retry')
+        cached = min(cached, prompt)
+        return money(((prompt - cached) * self.prices['prompt'] + cached * self.prices['cached']
+                      + completion * self.prices['completion']) / 1e6)

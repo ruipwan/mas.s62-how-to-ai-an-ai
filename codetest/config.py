@@ -57,6 +57,13 @@ class Config:
     run_cap_usd: float = 4.0
     input_price_cap: float = 0.30
     output_price_cap: float = 1.20
+    # API route. 'openai' calls OpenAI directly. OpenAI returns token usage, not cost, so the cost is
+    # computed at these list prices (USD per million tokens), which may not exceed the caps above.
+    # cached_input_price defaults to input_price, an upper bound.
+    provider: str = 'openrouter'
+    input_price: float | None = None
+    cached_input_price: float | None = None
+    output_price: float | None = None
 
     def __post_init__(self):
         if type(self.orchestrator_in_population) is not bool:
@@ -136,6 +143,33 @@ class Config:
             raise ValueError('Invalid budget or price ceiling')
         if self.condition == 'swarm' and (self.royalty_rate >= 1 or self.bounty_base <= 0):
             raise ValueError('Swarm needs a positive bounty_base and a royalty_rate below 1')
+        if self.provider not in {'openrouter', 'openai'}:
+            raise ValueError('provider must be openrouter or openai')
+        prices = ('input_price', 'cached_input_price', 'output_price')
+        for name in prices:
+            n = getattr(self, name)
+            if n is not None and (type(n) not in (int, float) or not math.isfinite(n) or n < 0):
+                raise ValueError(name + ' must be finite and nonnegative')
+        if self.provider == 'openrouter' and any(getattr(self, name) is not None for name in prices):
+            raise ValueError('input_price, cached_input_price and output_price apply to provider openai')
+        if self.provider == 'openai':
+            if self.input_price is None or self.output_price is None:
+                raise ValueError('provider openai needs input_price and output_price in USD per million tokens')
+            table = self.price_table()
+            if not (table['prompt'] <= self.input_price_cap and table['completion'] <= self.output_price_cap
+                    and table['cached'] <= table['prompt']):
+                raise ValueError('OpenAI prices may not exceed the price caps; cached input may not exceed input')
+            if '/' in self.model and not self.model.startswith('openai/'):
+                raise ValueError('provider openai needs an OpenAI model, e.g. openai/gpt-6-luna or gpt-6-luna')
+            if self.reasoning_enabled is not None:
+                raise ValueError('provider openai uses reasoning_effort; leave reasoning_enabled unset')
+
+    def price_table(self):
+        """Billing prices for provider openai, in USD per million tokens; None for OpenRouter."""
+        if self.provider != 'openai':
+            return None
+        cached = self.input_price if self.cached_input_price is None else self.cached_input_price
+        return {'prompt': self.input_price, 'cached': cached, 'completion': self.output_price}
 
     @property
     def worker_count(self):
@@ -155,6 +189,11 @@ class Config:
                 data.pop(name)  # Opt-in additions stay out of legacy manifests when off.
         if self.merge_slots == 1:
             data.pop('merge_slots')
+        if self.provider == 'openrouter':
+            data.pop('provider')
+        for name in ('input_price', 'cached_input_price', 'output_price'):
+            if getattr(self, name) is None:
+                data.pop(name)
         if self.condition != 'swarm':
             for name in ('crowding_cap', 'bounty_base', 'bounty_growth', 'royalty_rate'):
                 data.pop(name)
