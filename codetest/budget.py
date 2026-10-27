@@ -12,6 +12,8 @@ import uuid
 
 import requests
 
+from .api_diagnostics import response_diagnostics, validate_api_key
+
 
 class BudgetStop(RuntimeError):
     pass
@@ -243,14 +245,13 @@ class OpenRouter:
         self.contribution_contracts = contribution_contracts
         self.last_completion = {}
         variable = 'OPENAI_API_KEY' if provider == 'openai' else 'OPENROUTER_API_KEY'
-        self.key = os.environ.get(variable)
-        if not self.key:
-            raise ValueError(f"Set {variable} in the environment")
+        self.key = validate_api_key(os.environ.get(variable), variable)
         for key in ("prompt", "completion"):
             if money(caps[key]) <= 0:
                 raise ValueError("Provider price ceilings must be positive")
 
     def generate(self, messages, max_tokens, phase, agent):
+        validate_api_key(self.key, 'OPENAI_API_KEY' if self.provider == 'openai' else 'OPENROUTER_API_KEY')
         self.last_completion = {}
         if self.stop.exists():
             raise BudgetStop("Run STOP file exists")
@@ -298,14 +299,14 @@ class OpenRouter:
             payload['response_format'] = {'type': 'json_schema', 'json_schema': {
                 'name': phase + '_action', 'strict': True, 'schema': action_schema(phase, self.shared_scratchpad, self.contribution_contracts)}}
         try:
+            headers = {'Authorization': 'Bearer ' + self.key}
+            if self.provider == 'openai':
+                headers['X-Client-Request-Id'] = ident
             response = requests.post(URLS[self.provider],
-                                     headers={"Authorization": "Bearer " + self.key},
+                                     headers=headers,
                                      json=payload, timeout=(15, 180), allow_redirects=False)
             if response.status_code != 200:
-                # Keep only bounded diagnostic metadata, never request headers.
-                detail = response.text[:2000].replace(self.key, '[REDACTED]')
-                self.event('api_http_error', call_id=ident, status=response.status_code,
-                           retry_after=response.headers.get('Retry-After'), detail=detail)
+                self.event('api_http_error', call_id=ident, **response_diagnostics(response, self.key))
                 raise RuntimeError(f"{self.provider} HTTP {response.status_code}; no retry")
             data = response.json()
             usage = data.get("usage") or {}

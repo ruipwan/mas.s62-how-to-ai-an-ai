@@ -125,6 +125,16 @@ python run.py run --config configs/openai/k10-gpt6-luna-scratchpad.json --task d
 python run.py run --config configs/openai/k10-gpt6-luna-scratchpad-market.json --task datasets/commit0-tinydb/task.json --out runs/tinydb-k10-market
 ```
 
+Before a paid run, check the configured OpenAI model without sending a completion:
+
+```bash
+python run.py diagnose-api --config configs/openai/k10-gpt6-luna-scratchpad.json
+```
+
+This read-only diagnostic checks key syntax locally, then makes one free `GET /v1/models/{model}` request to OpenAI. It does not open or modify the campaign ledger, follow redirects, or retry. Exit code 0 means the requested model metadata was returned; other results exit with code 2 and distinguish authentication, access, rate limit, HTTP, and network failures. A successful GET does not confirm that completion requests or a structured output schema will be accepted, or verify quota or balance. `preflight --paid` only checks whether a key is present, alongside the local Docker checks.
+
+OpenAI completion requests send the ledger call ID as `X-Client-Request-Id`, so even an empty error can be traced without recording credentials. HTTP failures record a bounded response excerpt, request ID, content type, response body byte count, server, and retry delay when available. Credentials are redacted before truncation. Request headers and prompts are not logged by the diagnostic. An empty HTTP error body is still recorded with its status and response metadata. Malformed keys containing non-ASCII, whitespace, or control characters are rejected before a run directory or paid reservation is created.
+
 TinyDB uses adapted visible development tests, not a hidden generalization score. Preparation downloads data; `run` makes paid calls. The scripted demo and offline unit tests do neither.
 
 ## Budget and stopping
