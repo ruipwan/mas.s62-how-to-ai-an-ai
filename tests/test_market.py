@@ -59,5 +59,24 @@ class ClassicViewTests(MarketTestCase):
         self.assertFalse(any('failing' in e['feedback'] for e in self.rows('snapshot')))
 
 
+class RepositoryTests(unittest.TestCase):
+    def test_replace_sees_a_same_size_rewrite_with_a_preserved_timestamp(self):
+        import os
+        from codetest.sandbox import Repository
+        with tempfile.TemporaryDirectory() as temp:
+            root, old = Path(temp), 1_000_000_000
+            for name, text in (('seed', 'X = 1\n'), ('candidate', 'X = 2\n')):
+                (root / name).mkdir()
+                (root / name / 'a.py').write_text(text)
+                os.utime(root / name / 'a.py', (old, old))
+            repo = Repository(root / 'repo', root / 'seed')
+            # Make git trust size and mtime alone, as it can when an inode is reused within one second.
+            repo.git('config', 'core.checkStat', 'minimal')
+            repo.git('config', 'core.trustctime', 'false')
+            self.assertIsNotNone(repo.replace(root / 'candidate', repo.version))
+            self.assertEqual((root / 'repo' / 'a.py').read_text(), 'X = 2\n')
+            self.assertEqual(repo.git('status', '--porcelain'), '')
+
+
 if __name__ == '__main__':
     unittest.main()

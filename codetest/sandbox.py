@@ -223,6 +223,9 @@ class Repository:
             if p.name != '.git':
                 shutil.rmtree(p) if p.is_dir() else p.unlink()
         copy_source(candidate, self.path)
+        # copy2 keeps timestamps, so a same-size rewrite can match git's cached stat data and be
+        # skipped. Reset the index to HEAD without stat data so every file is compared by content.
+        self.git('read-tree', 'HEAD')
         self.git('add', '--all')
         tracked = self.git('ls-files')
         if any(n.startswith('.git/') for n in tracked.splitlines()):
