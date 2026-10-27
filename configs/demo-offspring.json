@@ -1,0 +1,16 @@
+{
+  "k": 6,
+  "rounds": 6,
+  "max_rounds": 6,
+  "work_calls": 4,
+  "membership_every": 1,
+  "condition": "voluntary_pooled",
+  "shared_scratchpad": true,
+  "merge_slots": 6,
+  "rent": 0.05,
+  "task_board": true,
+  "seed": 7,
+  "offspring": true,
+  "offspring_every": 2,
+  "offspring_endowment": 0.25
+}

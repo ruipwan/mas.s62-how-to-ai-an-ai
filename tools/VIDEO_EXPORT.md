@@ -65,3 +65,29 @@ Tests use temporary local fixtures and reject running runs, unmarked partial
 exports, source-contained output, and discontinuous logs before rendering. An
 actual interrupted-run export was also inspected visually and checked with
 ffprobe for 1920 × 1080, H.264, 30 fps and manifest-matching duration.
+
+## Offspring replay
+
+The offspring viewer distinguishes the fixed active population from all historical
+individuals. Its lineage panel connects parents to children, labels retired
+individuals, and records initial investment and strategy changes. The replaced
+individual is not necessarily the parent. Retired accounts remain selectable.
+Past rounds show retirement-time balances; the final round can show latest
+retired balances, including delayed credit. Missing membership before birth or
+after retirement is never shown as a solo membership.
+
+When offspring records are present, the video includes explicit retirement,
+investment and birth scenes and replaces its compact team-size panel with the
+focused lineage. Without offspring records, the existing layout remains. Scripted
+fixtures are visibly labelled SCRIPTED DEMO, with synthetic module coverage and
+no benchmark claim. No extra model calls are made for rendering.
+
+Run the browser checks against a completed free fixture:
+
+    node tools/check_offspring_replay.mjs --run /path/to/free-demo --playwright /path/to/playwright --browser /path/to/chromium
+
+Optional --viewer selects a template; --screenshots writes representative HTML
+images outside the source run. The checks also create temporary in-memory
+variants for legacy compatibility, delayed retired credit and an interruption
+between birth and membership. Source manifest/state/events hashes must remain
+unchanged. Temporary test files are removed only from the verified temp folder.

@@ -16,8 +16,8 @@ def metrics(state, events):
         grouped += [sizes[a['team']] for a in row['agents']]
         teams = {a['id']: tuple(sorted(b['id'] for b in row['agents'] if b['team'] == a['team'])) for a in row['agents']}
         memberships.append(teams)
-    switches = sum(prev.get(a) != team for prev, now in zip(memberships, memberships[1:]) for a, team in now.items())
-    comparisons = sum(len(now) for now in memberships[1:])
+    switches = sum(prev.get(a) != team for prev, now in zip(memberships, memberships[1:]) for a, team in now.items() if a in prev)
+    comparisons = sum(len(prev.keys() & now.keys()) for prev, now in zip(memberships, memberships[1:]))
     wealth = sorted(a['wealth'] for a in state.get('agents', []))
     gini = sum((2 * i - len(wealth) - 1) * w for i, w in enumerate(wealth, 1)) / (len(wealth) * sum(wealth)) if sum(wealth) else 0
     activity = Counter((e['agent'], e.get('tool', 'unknown')) for e in events if e['event'] == 'tool')
@@ -54,7 +54,44 @@ def metrics(state, events):
             'no_publication_rounds': sum(e['event'] == 'no_publication' for e in events),
             'regressions_blocked': sum(e['event'] == 'regression_blocked' for e in events),
             'market': market_metrics(state, events),
-            'swarm': swarm_metrics(state, events)}
+            'swarm': swarm_metrics(state, events),
+            **({'offspring': offspring_metrics(state, events)} if state.get('config', {}).get('offspring') else {})}
+
+
+def offspring_metrics(state, events):
+    """Descriptive lineage diagnostics, never a causal or hidden-test improvement claim."""
+    births = [e for e in events if e['event'] == 'agent_born']
+    children = {e['agent']: e for e in births}
+    lineage = {row['id']: row for row in state.get('offspring', {}).get('lineage', [])}
+    active = state.get('agents', [])
+    roots = Counter(lineage.get(a['id'], {}).get('root', a['id']) for a in active)
+    child_publications = [e for e in events if e['event'] == 'publication'
+                          and set(e.get('participants', [])) & children.keys()]
+    contributed = {name for e in child_publications for name in e.get('participants', []) if name in children}
+    latencies = {}
+    for event in child_publications:
+        for name in set(event.get('participants', [])) & children.keys():
+            latencies.setdefault(name, event['round'] - children[name]['round'])
+    return {'births': len(births), 'retirements': sum(e['event'] == 'agent_retired' for e in events),
+            'skipped_births': dict(Counter(e.get('reason', 'unknown') for e in events if e['event'] == 'offspring_skipped')),
+            'active_population': len(active), 'retired_accounts': len(state.get('retired_accounts', [])),
+            'membership_persistence_scope': 'Only identities present in both consecutive snapshots; births and retirements are excluded.',
+            'wealth_gini_scope': 'Active population only. Retired wealth is reported separately.',
+            'max_generation': max((r.get('generation', 0) for r in lineage.values()), default=0),
+            'active_lineage_roots': dict(sorted(roots.items())),
+            'largest_active_lineage_share': max(roots.values()) / len(active) if active else None,
+            'active_strategy_diversity': len({lineage[a['id']]['strategy_sha256'] for a in active
+                                              if a['id'] in lineage and 'strategy_sha256' in lineage[a['id']]}),
+            'parent_invested': math.fsum(e['amount'] for e in events if e['event'] == 'offspring_investment'),
+            'active_wealth': math.fsum(a['wealth'] for a in active),
+            'retired_wealth': math.fsum(a['wealth'] for a in state.get('retired_accounts', [])),
+            'children_with_publication_credit': len(contributed),
+            'child_coauthored_publications': len(child_publications),
+            'rounds_to_first_publication_credit': dict(sorted(latencies.items())),
+            'child_work_actions': sum(e['event'] == 'tool' and e.get('agent') in children for e in events),
+            'dedicated_birth_model_calls': sum(e['event'] == 'api_charged' and str(e.get('phase', '')).startswith(('birth', 'mutation', 'offspring')) for e in events),
+            'cost_caveat': 'Birth and seeded mutation add no dedicated model turn. Added context, teaming, rent and later actions can change total tokens, calls and dollars.',
+            'credit_caveat': 'Publication credit can be shared with teammates and does not isolate a child strategy effect. Wealth selection is not a direct measure of coding ability. Retired balances remain part of conserved total wealth but cannot finance active work.'}
 
 
 def ranks(values):

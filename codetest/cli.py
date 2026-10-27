@@ -112,6 +112,9 @@ def execute(cfg, task, out, *, demo=False, team_evolution=False, transport=None,
         manifest['architecture'] = cfg.condition
         manifest['worker_count'] = cfg.worker_count
         manifest['note'] = 'No market. Work, peer discussion, orchestration, voting and synthesis are recorded separately. Baseline sources are isolated from market experiments.'
+    elif cfg.offspring:
+        manifest['architecture'] = 'offspring'
+        manifest['note'] = ('Fixed active population with parent-funded strategy offspring. Historical contributors retain their own financial accounts. Work allocations do not increase; total token and control costs need not be equal.')
     elif cfg.condition == 'swarm':
         manifest['architecture'] = 'swarm'
         manifest['note'] = ('Task board from failing visible tests, one claim call per active agent, verified merge '
@@ -163,6 +166,9 @@ def execute(cfg, task, out, *, demo=False, team_evolution=False, transport=None,
                 return IndependentPolicy(own_client, cfg, events)
             engine = IndependentEngine(cfg, task, policy_factory, events, out,
                                        pool_root=None if demo else ROOT / 'artifacts/baseline-sandbox-leases')
+        elif cfg.offspring:
+            from .offspring import OffspringEngine
+            engine = OffspringEngine(cfg, task, policy, events, out)
         elif cfg.condition == 'swarm':
             from .swarm import SwarmEngine
             engine = SwarmEngine(cfg, task, policy, events, out)

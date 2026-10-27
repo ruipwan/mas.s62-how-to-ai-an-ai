@@ -42,6 +42,12 @@ class Config:
     merge_slots: int = 1
     rent: float = 0.0
     task_board: bool = False
+    # Fixed active population, inherited strategies, and explicit parent-funded offspring.
+    offspring: bool = False
+    offspring_every: int = 2
+    offspring_endowment: float = 0.25
+    offspring_selection: str = 'wealth'
+    offspring_mutation: bool = True
     # Swarm condition: failing visible tests form a task board; agents claim tasks,
     # verified merges pay bounties. Money is issued only against test flips.
     crowding_cap: int = 2
@@ -66,6 +72,17 @@ class Config:
     output_price: float | None = None
 
     def __post_init__(self):
+        if type(self.offspring) is not bool or type(self.offspring_mutation) is not bool:
+            raise ValueError('offspring and offspring_mutation must be boolean')
+        if type(self.offspring_every) is not int or self.offspring_every < 2:
+            raise ValueError('offspring_every must be an integer of at least two rounds')
+        if self.offspring_selection not in {'wealth', 'random'}:
+            raise ValueError('offspring_selection must be wealth or random')
+        if (type(self.offspring_endowment) not in (int, float) or not math.isfinite(self.offspring_endowment)
+                or self.offspring_endowment <= 0):
+            raise ValueError('offspring_endowment must be positive and finite')
+        if self.offspring and (self.condition != 'voluntary_pooled' or self.contribution_contracts or self.k < 2):
+            raise ValueError('Offspring requires voluntary_pooled, at least two agents, and no contracts')
         if type(self.orchestrator_in_population) is not bool:
             raise ValueError('orchestrator_in_population must be boolean')
         if type(self.shared_scratchpad) is not bool:
