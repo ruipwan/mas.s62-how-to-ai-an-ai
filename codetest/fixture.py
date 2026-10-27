@@ -22,7 +22,7 @@ class FixtureBox:
         if command == 'fixture:inspect':
             output = 'Files: ' + ', '.join(p.name for p in self.path.glob('*.py'))
         elif command == 'fixture:test':
-            output = json.dumps(FixtureTask.inspect(self.path))
+            output = json.dumps({k: v for k, v in FixtureTask.inspect(self.path).items() if k != 'failing'})
         elif isinstance(command, str) and command.startswith('fixture:edit:'):
             _, _, identity, epoch = command.split(':')
             if not identity.isdigit() or not epoch.isdigit():

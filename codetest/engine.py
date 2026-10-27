@@ -82,7 +82,7 @@ class Engine:
                 'team_size_rule': 'max(1, floor(k/2)); a ceiling, not a target size',
                 'wealth': agent.wealth, 'condition': self.cfg.condition,
                 'fixed_bid': self.cfg.fixed_bid, 'task': task,
-                'base_commit': self.repo.version, 'public_feedback': self.feedback,
+                'base_commit': self.repo.version, 'public_feedback': visible(self.feedback),
                 'public_notes': notes.read_text(errors='replace')[:3000] if notes.exists() else '',
                 'repository_files': [name for name in self.repo.git('ls-files').splitlines()
                                      if name.endswith(('.py', '.toml', '.md', '.rst', '.sh'))][:60],
@@ -228,7 +228,7 @@ class Engine:
         check, changed, probes, workers = proposal['check'], proposal['changed'], work['probes'], work['workers']
         code_changed = proposal['code_changed']
         for a in order:
-            d = self.ask('ballot', a, members=team.member_ids, candidate_check=check,
+            d = self.ask('ballot', a, members=team.member_ids, candidate_check=visible(check),
                          changed=changed, new_probe_count=len(probes), discussion=transcript[-4:])
             yes, amount = d.get('yes'), d.get('pledge')
             valid = type(yes) is bool
@@ -257,7 +257,7 @@ class Engine:
         proposal['eligible'] = bool(yes > len(members) / 2 and proposal['bid'] > 0 and proposal['participants']
                                     and ((changed and check.get('build')) or (probes and not code_changed))
                                     and not regressed)
-        self.emit('candidate', **{k: v for k, v in proposal.items() if k != 'source'})
+        self.emit('candidate', **{k: v for k, v in proposal.items() if k not in ('source', 'check')}, check=visible(check))
         write_json(directory / 'candidate.json', proposal)
         return proposal
 
@@ -431,7 +431,8 @@ class Engine:
             self.teams.agent(name).wealth += dividend / len(winner['participants'])
         self.dividends += dividend
         record = {'round': self.step, 'team': winner['team'], 'participants': sorted(winner['participants']),
-                  'bid': winner['bid'], 'commit': self.repo.version, 'before': before, 'after': self.feedback,
+                  'bid': winner['bid'], 'commit': self.repo.version, 'before': visible(before),
+                  'after': visible(self.feedback),
                   'dividend': dividend, 'patch': str(patch_path.relative_to(self.out)),
                   'new_probe_count': len(winner['new_probes']), 'changed_paths': winner.get('changed_paths', [])}
         self.history.append(record)
@@ -446,7 +447,7 @@ class Engine:
 
     def snapshot(self):
         row = {'round': self.step, 'agents': self.roster(), 'commit': self.repo.version,
-               'feedback': self.feedback, 'accepted': len(self.history), 'probes': len(self.bank)}
+               'feedback': visible(self.feedback), 'accepted': len(self.history), 'probes': len(self.bank)}
         self.snapshots.append(row)
         self.emit('snapshot', **{k: v for k, v in row.items() if k != 'round'})
 
@@ -476,7 +477,7 @@ class Engine:
                 ready, reason = self.answer_ready()
                 checkpoint = {'completed_rounds': self.step + 1, 'answer_ready': ready,
                               'criterion': reason, 'publications': len(self.history),
-                              'public_feedback': self.feedback, 'next_limit': self.round_limit}
+                              'public_feedback': visible(self.feedback), 'next_limit': self.round_limit}
                 if not ready and self.round_limit < self.cfg.max_rounds:
                     checkpoint['next_limit'] = min(self.cfg.max_rounds, self.round_limit + self.cfg.round_extension)
                     self.emit('rounds_extended', previous_limit=self.round_limit,
@@ -532,6 +533,15 @@ class Engine:
                 'snapshots': self.snapshots, 'burned': self.burned, 'progress_dividends': self.dividends,
                 'terminal_issued': self.terminal_issued, 'public_feedback': self.feedback,
                 'probe_count': len(self.bank), 'model_calls': self.policy.calls}
+
+
+def visible(check):
+    """Test results as agents and logs see them: counts, without per-test ids.
+
+    junit() keeps the failing test ids for the swarm task board and merge verification.
+    Classic conditions never showed them, so they stay internal unless a flag shows them.
+    """
+    return {k: v for k, v in check.items() if k != 'failing'}
 
 
 def tree_digest(root):
