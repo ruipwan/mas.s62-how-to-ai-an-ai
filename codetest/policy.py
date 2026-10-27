@@ -10,7 +10,8 @@ def prompt_revision(config):
     # Each opt-in rule changes SYSTEM text, so each gets its own suffix.
     return (_base_prompt_revision(config) + ('+regression-gate' if config.regression_gate else '')
             + (f'+merge-slots-{config.merge_slots}' if config.merge_slots > 1 else '')
-            + ('+rent' if config.rent else '') + ('+task-board' if config.task_board else ''))
+            + ('+rent' if config.rent else '') + ('+task-board' if config.task_board else '')
+            + (f'+offspring-{config.offspring_selection}-' + ('mutate' if config.offspring_mutation else 'clone') if config.offspring else ''))
 
 
 def _base_prompt_revision(config):
@@ -335,6 +336,16 @@ class Policy:
             if not self.config.structured_actions:
                 schema += '\nOptional scratchpad field: ' + json.dumps(action_schema(phase, True)['properties']['scratchpad'])
             turn += ' Set scratchpad to null when you have no new note. tool fetch is also available during work.'
+        if self.config.offspring:
+            system += ('\nOFFSPRING: The active population size remains fixed. Between scheduled rounds, '
+                       'one eligible parent funds a new agent that replaces a weaker agent. Wealth is the '
+                       'selection proxy in wealth mode, not proof of coding ability; random mode is a control. '
+                       'strategy contains inherited behavioral guidance with an optional bounded mutation. '
+                       'inherited_notes are copied observations, not verified truth or fresh tool results. '
+                       'Check them against the current repository before relying on them. No model weights, '
+                       'private conversations, team membership, or historical authorship are inherited. '
+                       'Retired contributors retain their historical payment rights. No extra work calls '
+                       'are granted for birth or mutation; follow the same task and action schema.')
         if self.config.contribution_contracts:
             system += CONTRACT_RULES
         messages = [{'role': 'system', 'content': system + team_rule + token_rule + '\nSCHEMA: ' + schema + turn},

@@ -70,6 +70,14 @@ class Engine:
     def emit(self, kind, **values):
         self.events.emit(kind, **{'round': self.step, **values})
 
+    def financial_account(self, name):
+        """Account for contribution payments; extensions may retain inactive owners."""
+        return self.teams.agent(name)
+
+    def financial_accounts(self):
+        """All balances participating in conservation, active by default."""
+        return self.agents
+
     def roster(self):
         return [{'id': a.name, 'team': a.team_tag or 'solo:' + a.name, 'wealth': round(a.wealth, 8)}
                 for a in self.agents]
@@ -518,11 +526,11 @@ class Engine:
         patch_path.parent.mkdir(exist_ok=True)
         patch_path.write_text(patch or '')
         for name, pledge in winner['pledges'].items():
-            self.teams.agent(name).wealth -= pledge
+            self.financial_account(name).wealth -= pledge
         previous = self.history[-1]['participants'] if self.history else []
         if previous:
             for name in previous:
-                self.teams.agent(name).wealth += winner['bid'] / len(previous)
+                self.financial_account(name).wealth += winner['bid'] / len(previous)
             self.emit('transfer', senders=winner['pledges'], recipients=previous,
                       amount=winner['bid'], team=winner['team'])
         else:
@@ -549,7 +557,7 @@ class Engine:
                 self.emit('feedback_incomparable', reason='visible test denominator changed', total=total,
                           expected=self.denominator)
         for name in winner['participants']:
-            self.teams.agent(name).wealth += dividend / len(winner['participants'])
+            self.financial_account(name).wealth += dividend / len(winner['participants'])
         self.dividends += dividend
         record = {'round': self.step, 'team': winner['team'], 'participants': sorted(winner['participants']),
                   'bid': winner['bid'], 'commit': self.repo.version, 'before': visible(before),
@@ -564,8 +572,9 @@ class Engine:
     def assert_accounting(self):
         expected = (self.cfg.k * self.cfg.initial_wealth - self.burned - self.rent_paid
                     + self.dividends + self.terminal_issued)
-        actual = math.fsum(a.wealth for a in self.agents) + (self.contracts.escrow if self.contracts else 0)
-        if any(a.wealth < -1e-8 for a in self.agents) or not math.isclose(expected, actual, abs_tol=1e-7):
+        accounts = self.financial_accounts()
+        actual = math.fsum(a.wealth for a in accounts) + (self.contracts.escrow if self.contracts else 0)
+        if any(a.wealth < -1e-8 for a in accounts) or not math.isclose(expected, actual, abs_tol=1e-7):
             raise AssertionError('Wealth conservation failed')
 
     def snapshot(self):

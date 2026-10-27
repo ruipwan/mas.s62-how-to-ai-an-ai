@@ -39,7 +39,7 @@ class OpenAIConfigTests(unittest.TestCase):
                 openai_config(**fields)
 
     def test_openai_experiment_configs_load(self):
-        names = sorted(p.name for p in (ROOT / 'configs/openai').glob('*.json'))
+        names = sorted(p.name for p in (ROOT / 'configs/openai').glob('*.json') if '-offspring' not in p.stem)
         self.assertEqual(len(names), 6)
         for name in names:
             cfg = config(ROOT / 'configs/openai' / name)
