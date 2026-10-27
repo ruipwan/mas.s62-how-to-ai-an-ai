@@ -80,33 +80,104 @@ def spearman(pairs):
 
 
 def market_metrics(state, events):
-    """Classic market conditions: do bids track verified gains, merge throughput, rent.
+    """Version 2, descriptive bid and publication diagnostics for classic conditions.
 
-    A candidate's gain is its own visible pass count minus the public count at the start of
-    its round, so it is defined for every eligible candidate, not only for winners.
+    Raw gain is the candidate's visible pass count minus the round's starting count.
+    Selection comparisons require comparable counts for every eligible candidate in
+    the round. They do not infer unrecorded attempt order or tie outcomes.
     """
-    rounds = max(1, sum(e['event'] == 'snapshot' and e.get('round', -1) >= 0 for e in events))
+    completed = {e['round'] for e in events if e['event'] == 'snapshot' and e.get('round', -1) >= 0}
     start = {e['round'] + 1: e.get('feedback') or {} for e in events if e['event'] == 'snapshot'}
-    by_round = defaultdict(list)
+    by_round, eligible_counts = defaultdict(list), Counter()
     for e in events:
-        if e['event'] != 'candidate' or 'task' in e or not e.get('eligible') or e.get('bid') is None:
+        if e['event'] != 'candidate' or 'task' in e or not e.get('eligible'):
             continue
-        base, check = start.get(e['round'], {}), e.get('check') or {}
-        if base.get('passed') is not None and check.get('passed') is not None and base.get('total') == check.get('total'):
-            by_round[e['round']].append((e['bid'], check['passed'] - base['passed']))
+        eligible_counts[e['round']] += 1
+        base, check, bid = start.get(e['round'], {}), e.get('check') or {}, e.get('bid')
+        counts = (base.get('passed'), check.get('passed'), base.get('total'), check.get('total'))
+        if (type(bid) in (int, float) and math.isfinite(bid)
+                and all(type(n) is int for n in counts)
+                and all(type(n) in (int, float) and math.isfinite(n) and 0 <= n <= 1
+                        for n in (base.get('score'), check.get('score')))
+                and base['total'] == check['total'] and base['total'] > 0
+                and 0 <= base['passed'] <= base['total'] and 0 <= check['passed'] <= check['total']):
+            by_round[e['round']].append({'team': e.get('team'), 'bid': bid,
+                                       'gain': check['passed'] - base['passed']})
     ordered = sorted(by_round)
     half = len(ordered) // 2
-    pooled = lambda rs: [p for r in rs for p in by_round[r]]
-    contested = [by_round[r] for r in ordered if len(by_round[r]) > 1 and len({g for _, g in by_round[r]}) > 1]
-    top = [max(g for b, g in rows if b == max(b for b, _ in rows)) == max(g for _, g in rows) for rows in contested]
+    pairs = lambda rows: [(c['bid'], c['gain']) for c in rows]
+    pooled = lambda rs: [p for r in rs for p in pairs(by_round[r])]
+    comparable = {r: by_round[r] for r, count in eligible_counts.items() if len(by_round[r]) == count}
+    multiple = {r: rows for r, rows in comparable.items() if len(rows) > 1}
+    contested = {r: rows for r, rows in multiple.items() if len({c['gain'] for c in rows}) > 1}
+    exact_ties = state.get('config', {}).get('merge_slots', 1) > 1
+
+    def top_bids(rows):
+        best = max(c['bid'] for c in rows)
+        # Match the actual selector: classic uses isclose, the merge queue sorts raw bids.
+        return [c for c in rows if (c['bid'] == best if exact_ties
+                                   else math.isclose(c['bid'], best, abs_tol=1e-10))]
+
+    expected_hits = []
+    for rows in contested.values():
+        tied = top_bids(rows)
+        best_gain = max(c['gain'] for c in rows)
+        expected_hits.append(sum(c['gain'] == best_gain for c in tied) / len(tied))
+    top_share = sum(expected_hits) / len(expected_hits) if expected_hits else None
+    within_round = [rho for rows in comparable.values() if (rho := spearman(pairs(rows))) is not None]
     merges = [e for e in events if e['event'] == 'publication' and 'task' not in e]
-    return {'eligible_candidates_scored': len(pooled(ordered)),
+    first_publication = {}
+    for publication in merges:
+        first_publication.setdefault(publication['round'], publication)
+    actual_hits, regrets, absent, unmatched = [], [], 0, 0
+    for round_id, rows in contested.items():
+        publication = first_publication.get(round_id)
+        if publication is None:
+            absent += 1
+            continue
+        matches = [c for c in rows if c['team'] is not None and c['team'] == publication.get('team')]
+        if len(matches) != 1:
+            unmatched += 1
+            continue
+        best_gain, chosen_gain = max(c['gain'] for c in rows), matches[0]['gain']
+        actual_hits.append(chosen_gain == best_gain)
+        regrets.append(best_gain - chosen_gain)
+    completed_merges = sum(e['round'] in completed for e in merges)
+    return {'metrics_version': 2,
+            'gain_definition': 'Candidate visible passed count minus the round starting count, with equal positive test totals and finite scores in [0, 1] for both checks.',
+            'bid_tie_policy': ('exact equality, as in merge queue ordering' if exact_ties else
+                               'math.isclose to maximum bid, rel_tol=1e-9 and abs_tol=1e-10, as in classic selection'),
+            'descriptive_caveat': ('Bidders already receive candidate checks. Pooled bids are confounded by team size, wealth and round. '
+                                   'Pooled and within-round correlations are descriptive, not evidence of price learning. '
+                                   'Tie-averaged shares are uniform expectations, not observed first-attempt outcomes. '
+                                   'First publication is the first recorded successful acceptance, possibly after rejected attempts. '
+                                   'Raw gain regret compares candidate checks, not marginal gains after merging or an achievable oracle.'),
+            'eligible_candidates_scored': len(pooled(ordered)),
+            'selection_comparable_rounds': len(comparable),
+            'selection_excluded_incomplete_rounds': len(eligible_counts) - len(comparable),
             'bid_gain_spearman': spearman(pooled(ordered)),
             'bid_gain_spearman_early': spearman(pooled(ordered[:half])),
             'bid_gain_spearman_late': spearman(pooled(ordered[half:])),
-            'top_bid_was_top_gain_share': sum(top) / len(top) if top else None,
-            'contested_rounds': len(top),
-            'merges': len(merges), 'merges_per_round': len(merges) / rounds,
+            'bid_gain_spearman_within_round_mean': sum(within_round) / len(within_round) if within_round else None,
+            'bid_gain_spearman_within_round_valid_rounds': len(within_round),
+            'within_round_spearman_definition': 'Equal-weight mean over complete comparable rounds with at least three candidates and nonconstant bids and gains.',
+            # Compatibility alias, corrected from the optimistic any-tied-candidate definition in v1.
+            'top_bid_was_top_gain_share': top_share,
+            'top_bid_tie_averaged_top_gain_share': top_share,
+            'contested_rounds': len(contested),
+            'top_bid_tie_rounds': sum(len(top_bids(rows)) > 1 for rows in multiple.values()),
+            'top_bid_tie_rounds_denominator': len(multiple),
+            'first_publication_top_gain_share': sum(actual_hits) / len(actual_hits) if actual_hits else None,
+            'first_publication_top_gain_hits': sum(actual_hits),
+            'first_publication_comparable_contested_rounds': len(actual_hits),
+            'first_publication_raw_gain_regret_mean': sum(regrets) / len(regrets) if regrets else None,
+            'first_publication_raw_gain_regret_total': sum(regrets),
+            'first_publication_raw_gain_regret_rounds': len(regrets),
+            'contested_rounds_without_publication': absent,
+            'contested_rounds_unmatched_first_publication': unmatched,
+            'merges': len(merges), 'completed_rounds': len(completed),
+            'completed_round_merges': completed_merges,
+            'merges_per_round': completed_merges / len(completed) if completed else None,
             'three_way_merges': sum(e.get('mode') == '3way' for e in merges),
             'rejected_merges': dict(Counter(e['reason'].split(':')[0] for e in events
                                             if e['event'] == 'merge_rejected' and 'task' not in e)),
