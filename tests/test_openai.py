@@ -8,7 +8,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / 'vendor')]
 from codetest.budget import Ledger, OpenRouter
-from codetest.cli import config
+from codetest.cli import config, execute
 from codetest.config import Config
 
 PRICES = {'prompt': .1, 'cached': .01, 'completion': .5}
@@ -79,7 +79,10 @@ class OpenAIClientTests(unittest.TestCase):
             self.assertEqual(client.generate([{'role': 'user', 'content': 'fixture'}], 32768, 'work', 'a'),
                              '{"tool": "test"}')
         self.assertEqual(post.call_args.args[0], 'https://api.openai.com/v1/chat/completions')
-        self.assertEqual(post.call_args.kwargs['headers'], {'Authorization': 'Bearer fixture-openai-key'})
+        reserved = [v for kind, v in self.events if kind == 'api_reserved'][0]
+        self.assertEqual(post.call_args.kwargs['headers'], {
+            'Authorization': 'Bearer fixture-openai-key', 'X-Client-Request-Id': reserved['call_id']})
+        self.assertNotIn('fixture-openai-key', json.dumps(self.events))
         payload = post.call_args.kwargs['json']
         self.assertEqual(payload['model'], 'gpt-6-luna')
         self.assertEqual(payload['max_completion_tokens'], 32768)
@@ -118,6 +121,59 @@ class OpenAIClientTests(unittest.TestCase):
                 client.generate([{'role': 'user', 'content': 'fixture'}], 1000, 'work', 'a')
         error = [v for kind, v in self.events if kind == 'api_http_error'][0]
         self.assertNotIn('fixture-openai-key', error['detail'])
+
+    def test_empty_http_error_keeps_metadata_and_reservation(self):
+        client = self.client()
+        with patch('codetest.budget.requests.post') as post:
+            post.return_value.status_code = 400
+            post.return_value.content = b''
+            post.return_value.text = ''
+            post.return_value.headers = {'X-Request-Id': 'req-empty', 'Content-Type': 'text/plain',
+                                         'Server': 'fixture-edge', 'Retry-After': '3'}
+            with self.assertRaisesRegex(RuntimeError, 'openai HTTP 400'):
+                client.generate([{'role': 'user', 'content': 'private prompt'}], 1000, 'work', 'a')
+            self.assertEqual(post.call_count, 1)
+            sent_id = post.call_args.kwargs['headers']['X-Client-Request-Id']
+        error = [v for kind, v in self.events if kind == 'api_http_error'][0]
+        self.assertEqual(error, {'call_id': sent_id, 'status': 400, 'request_id': 'req-empty',
+                                 'content_type': 'text/plain', 'body_bytes': 0, 'server': 'fixture-edge',
+                                 'retry_after': '3', 'detail': ''})
+        self.assertNotIn('private prompt', json.dumps(error))
+        self.assertTrue(self.ledger.summary()['blocked'])
+        self.assertEqual(self.ledger.summary()['calls'], 1)
+        self.assertGreater(self.ledger.summary()['unconfirmed_usd'], 0)
+
+    def test_malformed_key_is_rejected_before_reservation(self):
+        client = self.client()
+        for key in ('', 'fixture key', 'fixture-key\n', 'fixture-key\x00', 'fixture-key\u200b',
+                    'fixture-\u2603', 'fixture-\u4e2d', 'fixture-\u00e9'):
+            with self.subTest(key=repr(key)), patch('codetest.budget.requests.post') as post:
+                client.key = key
+                with self.assertRaises(ValueError) as error:
+                    client.generate([{'role': 'user', 'content': 'fixture'}], 1000, 'work', 'a')
+                if key:
+                    self.assertNotIn(key, str(error.exception))
+                post.assert_not_called()
+        self.assertEqual(self.ledger.summary()['calls'], 0)
+        self.assertEqual(self.ledger.summary()['unconfirmed_usd'], 0)
+        self.assertFalse(self.ledger.summary()['blocked'])
+        self.assertEqual(self.events, [])
+
+    def test_malformed_key_creates_no_run_directory_or_ledger_entry(self):
+        cfg = openai_config()
+        target = Path(self.temp.name) / 'must-not-exist'
+        before = self.ledger.path.read_bytes()
+        for key in ('', 'fixture key', 'fixture-\u2603', 'fixture-\u4e2d'):
+            with self.subTest(key=repr(key)), patch.dict('os.environ', {'OPENAI_API_KEY': key}), \
+                 patch('codetest.cli.LEDGER', self.ledger.path), \
+                 patch('codetest.cli.Ledger', side_effect=AssertionError('Opened ledger')), \
+                 patch('codetest.cli.preflight') as preflight:
+                with self.assertRaises(ValueError):
+                    execute(cfg, None, target)
+                preflight.assert_not_called()
+            self.assertFalse(target.exists())
+            self.assertEqual(self.ledger.path.read_bytes(), before)
+        self.assertEqual(self.ledger.summary()['calls'], 0)
 
     def test_key_and_prices_are_required(self):
         with patch.dict('os.environ', {}, clear=True):

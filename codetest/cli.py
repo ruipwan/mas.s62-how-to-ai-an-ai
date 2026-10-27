@@ -22,6 +22,7 @@ from .policy import Policy, prompt_revision
 from .report import replay
 from .sandbox import run
 from .analysis import analyze
+from .api_diagnostics import diagnose_openai, validate_api_key
 
 ROOT = Path(__file__).resolve().parents[1]
 LEDGER = ROOT / 'artifacts/campaign.sqlite'
@@ -64,6 +65,9 @@ def preflight(task=None, paid=False):
 
 
 def execute(cfg, task, out, *, demo=False, team_evolution=False):
+    if not demo:
+        variable = 'OPENAI_API_KEY' if cfg.provider == 'openai' else 'OPENROUTER_API_KEY'
+        validate_api_key(os.environ.get(variable), variable)
     baseline = cfg.condition in BASELINES
     out = Path(out).resolve()
     out.mkdir(parents=True, exist_ok=False)
@@ -250,6 +254,7 @@ def main():
     p = commands.add_parser('plan'); p.add_argument('--config')
     p = commands.add_parser('prepare'); p.add_argument('benchmark', choices=['programbench', 'commit0', 'nl2repo']); p.add_argument('task_id'); p.add_argument('--out', required=True)
     p = commands.add_parser('preflight'); p.add_argument('--task'); p.add_argument('--paid', action='store_true')
+    p = commands.add_parser('diagnose-api', help='Read-only OpenAI model access check, no paid calls'); p.add_argument('--config', required=True)
     p = commands.add_parser('build'); p.add_argument('--task', required=True)
     for name in ('run', 'demo'):
         p = commands.add_parser(name); p.add_argument('--config'); p.add_argument('--out', required=True)
@@ -272,6 +277,11 @@ def main():
             result = prepare(args.benchmark, args.task_id, args.out)
         elif args.command == 'preflight':
             result = preflight(Task.load(args.task) if args.task else None, args.paid)
+        elif args.command == 'diagnose-api':
+            cfg = config(args.config)
+            if cfg.provider != 'openai':
+                raise ValueError('diagnose-api requires a config with provider openai')
+            result = diagnose_openai(cfg.model)
         elif args.command == 'build':
             result = build(Task.load(args.task))
         elif args.command in {'run', 'demo'}:
@@ -303,5 +313,7 @@ def main():
             ThreadingHTTPServer(('127.0.0.1', args.port), handler).serve_forever()
             return
         print(json.dumps(result, indent=2))
+        if args.command == 'diagnose-api' and not result['ok']:
+            parser.exit(2)
     except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as e:
         parser.exit(2, str(e) + '\n')
