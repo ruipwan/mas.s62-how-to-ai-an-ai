@@ -52,7 +52,26 @@ def metrics(state, events):
             'work_calls_by_agent': dict(by_agent), 'tool_counts': dict(by_tool),
             'invalid_decisions': sum(e['event'] in {'invalid_action', 'invalid_response'} for e in events),
             'no_publication_rounds': sum(e['event'] == 'no_publication' for e in events),
-            'regressions_blocked': sum(e['event'] == 'regression_blocked' for e in events)}
+            'regressions_blocked': sum(e['event'] == 'regression_blocked' for e in events),
+            'swarm': swarm_metrics(state, events)}
+
+
+def swarm_metrics(state, events):
+    """Merge throughput, wasted candidates, duplicate claims and rest, for the swarm condition."""
+    rounds = max(1, sum(e['event'] == 'snapshot' and e.get('round', -1) >= 0 for e in events))
+    candidates = [e for e in events if e['event'] == 'candidate' and 'task' in e]
+    per_task_round = Counter((e['round'], e['task']) for e in candidates)
+    merges = [e for e in events if e['event'] == 'publication' and 'task' in e]
+    return {'merges': len(merges), 'merges_per_round': len(merges) / rounds,
+            'three_way_merges': sum(e.get('mode') == '3way' for e in merges),
+            'rejected_merges': dict(Counter(e['reason'] for e in events if e['event'] == 'merge_rejected')),
+            'eligible_candidates': sum(e['eligible'] for e in candidates),
+            'duplicate_task_claims': sum(n - 1 for n in per_task_round.values() if n > 1),
+            'resting_agent_rounds': sum(len(e['agents']) for e in events if e['event'] == 'rest'),
+            'invalid_claims': sum(e['event'] == 'invalid_action' and e.get('phase') == 'claim' for e in events),
+            'bounties_issued': state.get('bounties_issued'),
+            'royalty_share': (sum(e.get('royalty', 0) for e in merges) / state['bounties_issued']
+                             if state.get('bounties_issued') else None)}
 
 
 def replay(directory, *, filename='replay.html'):

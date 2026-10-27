@@ -197,6 +197,10 @@ class Engine:
                 self.emit('invalid_action', agent=a.name, phase='join', reason=str(e))
         self.teams.invitations.clear()
 
+    def working_teams(self):
+        """Every agent works each round, solo or in its current team."""
+        return list(self.teams.active_teams(self.step))
+
     def restore_protected(self, candidate):
         for rel in self.task.data.get('protected_paths', []):
             dest, source = candidate / rel, self.task.seed / rel
@@ -212,103 +216,17 @@ class Engine:
         members = [self.teams.agent(n) for n in team.member_ids]
         directory = self.out / 'candidates' / f'round-{self.step:02}' / team.team_id.replace(':', '-')
         directory.mkdir(parents=True)
-        transcript, probes, workers = [], [], set()
-        personal_results = {a.name: [] for a in members}
-        base = self.repo.version
+        transcript = []
         order = list(members)
         self.rng.shuffle(order)
         for a in order:
             d = self.ask('discuss', a, members=team.member_ids, discussion=transcript[-6:])
             msg = self.route_message(a, team.member_ids, d)
             transcript.append({'author': a.name, 'text': msg})
-        with self.task.sandbox(self.repo.path) as box:
-            bank_path = directory / 'public-probes.jsonl'
-            bank_path.write_text(''.join(json.dumps(x) + '\n' for x in self.bank))
-            box.put(bank_path, '/public/probes.jsonl', readonly=True)
-            # Round robin work on the same private workspace; no member gets bonus calls.
-            for slot in range(self.cfg.work_calls):
-                for a in order:
-                    reply = self.ask('work', a, members=team.member_ids, slot=slot,
-                                     your_recent_work=personal_results[a.name][-2:],
-                                     discussion=transcript[-5:])
-                    if self.scratchpad:
-                        box.put(self.scratchpad.path, '/public/scratchpad.json', readonly=True)
-                    if self.contracts:
-                        box.put(self.contracts.path, '/public/contracts.json', readonly=True)
-                    tool = reply.get('tool')
-                    if not isinstance(tool, str):
-                        tool = 'invalid'
-                    result = {'status': 'invalid_action'}
-                    try:
-                        if tool in {'inspect', 'edit', 'test'}:
-                            result = box.execute(reply.get('command'))
-                            if result['status'] == 'ok':
-                                workers.add(a.name)
-                        elif tool == 'probe' and self.task.data['benchmark'] == 'programbench':
-                            entry = discover(self.task, reply)
-                            if entry['id'] not in {p['id'] for p in probes + self.bank}:
-                                probes.append(entry)
-                            private_path = directory / 'private-probes.jsonl'
-                            private_path.write_text(''.join(json.dumps({**p, 'readable': readable_observation(p['expected'], 16384)}) + '\n' for p in probes))
-                            box.put(private_path, '/public/private-probes.jsonl', readonly=True)
-                            result = {'status': 'reproduced', 'id': entry['id'],
-                                      'observation': readable_observation(entry['expected']),
-                                      'evidence_file': '/public/private-probes.jsonl'}
-                            workers.add(a.name)
-                        elif tool == 'message' and isinstance(reply.get('message'), str) and reply['message'].strip():
-                            result = {'status': 'message'}
-                        elif tool == 'fetch' and self.scratchpad:
-                            result = self.scratchpad.fetch(reply.get('command'), a.name, base, box, self.step)
-                        elif tool == 'contract' and self.contracts:
-                            action = reply.get('contract')
-                            if isinstance(action, dict) and action.get('operation') == 'settle':
-                                with tempfile.TemporaryDirectory(prefix='codetest-contract-source-') as temp:
-                                    source = Path(temp) / 'source'
-                                    box.snapshot(source)
-                                    result = self.contracts.perform(a.name, action, self.step, self.bank + probes,
-                                                                   source=source, verify=lambda source, checks: probe_score(self.task, source, checks))
-                            else:
-                                result = self.contracts.perform(a.name, action, self.step, self.bank + probes)
-                            self.assert_accounting()
-                        else:
-                            raise ValueError('Unknown tool or unavailable reference')
-                    except (ValueError, TypeError, json.JSONDecodeError) as e:
-                        result = {'status': 'invalid_action', 'error': str(e)}
-                    msg = self.route_message(a, team.member_ids, reply)
-                    if self.cfg.memory_trace:
-                        # Bounded trace of this agent's own actions, not only its latest note.
-                        a.memory = (a.memory + f"\n[r{self.step} s{slot} {tool}:{result.get('status')}] {msg}")[-2000:]
-                    else:
-                        a.memory = msg
-                    entry = {'author': a.name, 'tool': tool, 'message': msg,
-                             'result': json.dumps(result, ensure_ascii=False)[:4500]}
-                    transcript.append(entry)
-                    personal_results[a.name].append(entry)
-                    self.emit('tool', agent=a.name, team=team.team_id, slot=slot, tool=tool, result=result)
-                    if not box.alive:
-                        raise RuntimeError('Candidate sandbox stopped; allocated work incomplete')
-            source = directory / 'source'
-            box.snapshot(source)
-        self.restore_protected(source)
-        # Validate exactly the files that will be submitted, on a fresh checkout.
-        if self.task.data['benchmark'] == 'programbench' and (source / 'executable').is_file():
-            (source / 'executable').unlink()
-        staged = Repository(directory / 'tracked-repository', source)
-        staged.package(directory / 'candidate.tar.gz')
-        source = directory / 'tracked-source'
-        safe_extract((directory / 'candidate.tar.gz').read_bytes(), source)
-        check = self.task.check(source, directory / 'check')
-        if self.task.data['benchmark'] == 'programbench' and check.get('build'):
-            check['probes'] = probe_score(self.task, source, self.bank + probes)
-        # Evidence/notes-only proposals can be useful while the implementation is incomplete.
-        changed = tree_digest(source) != tree_digest(self.repo.path)
-        changed_paths = changed_files(self.repo.path, source)
-        code_changed = any(not name.endswith('.md') for name in changed_paths)
-        proposal = {'team': team.team_id, 'members': team.member_ids, 'base_commit': base,
-                    'source': str(source), 'check': check, 'changed': changed, 'changed_paths': changed_paths,
-                    'new_probes': probes, 'workers': sorted(workers), 'votes': {}, 'pledges': {}}
-        if self.scratchpad and changed:
-            proposal['shared_artifact'] = self.scratchpad.share(proposal, self.repo.path, self.step)
+        work = self.work(team, order, directory, transcript)
+        proposal = self.assess(team, directory, work)
+        check, changed, probes, workers = proposal['check'], proposal['changed'], work['probes'], work['workers']
+        code_changed = proposal['code_changed']
         for a in order:
             d = self.ask('ballot', a, members=team.member_ids, candidate_check=check,
                          changed=changed, new_probe_count=len(probes), discussion=transcript[-4:])
@@ -341,6 +259,110 @@ class Engine:
                                     and not regressed)
         self.emit('candidate', **{k: v for k, v in proposal.items() if k != 'source'})
         write_json(directory / 'candidate.json', proposal)
+        return proposal
+
+    def work(self, team, order, directory, transcript, extra=None):
+        """Equal round-robin work slots in one private workspace; writes directory/source."""
+        probes, workers, fetched = [], set(), set()
+        personal_results = {a.name: [] for a in order}
+        base = self.repo.version
+        with self.task.sandbox(self.repo.path) as box:
+            bank_path = directory / 'public-probes.jsonl'
+            bank_path.write_text(''.join(json.dumps(x) + '\n' for x in self.bank))
+            box.put(bank_path, '/public/probes.jsonl', readonly=True)
+            # Round robin work on the same private workspace; no member gets bonus calls.
+            for slot in range(self.cfg.work_calls):
+                for a in order:
+                    reply = self.ask('work', a, members=team.member_ids, slot=slot,
+                                     your_recent_work=personal_results[a.name][-2:],
+                                     discussion=transcript[-5:], **(extra or {}))
+                    if self.scratchpad:
+                        box.put(self.scratchpad.path, '/public/scratchpad.json', readonly=True)
+                    if self.contracts:
+                        box.put(self.contracts.path, '/public/contracts.json', readonly=True)
+                    tool = reply.get('tool')
+                    if not isinstance(tool, str):
+                        tool = 'invalid'
+                    result = {'status': 'invalid_action'}
+                    try:
+                        if tool in {'inspect', 'edit', 'test'}:
+                            result = box.execute(reply.get('command'))
+                            if result['status'] == 'ok':
+                                workers.add(a.name)
+                        elif tool == 'probe' and self.task.data['benchmark'] == 'programbench':
+                            entry = discover(self.task, reply)
+                            if entry['id'] not in {p['id'] for p in probes + self.bank}:
+                                probes.append(entry)
+                            private_path = directory / 'private-probes.jsonl'
+                            private_path.write_text(''.join(json.dumps({**p, 'readable': readable_observation(p['expected'], 16384)}) + '\n' for p in probes))
+                            box.put(private_path, '/public/private-probes.jsonl', readonly=True)
+                            result = {'status': 'reproduced', 'id': entry['id'],
+                                      'observation': readable_observation(entry['expected']),
+                                      'evidence_file': '/public/private-probes.jsonl'}
+                            workers.add(a.name)
+                        elif tool == 'message' and isinstance(reply.get('message'), str) and reply['message'].strip():
+                            result = {'status': 'message'}
+                        elif tool == 'fetch' and self.scratchpad:
+                            result = self.scratchpad.fetch(reply.get('command'), a.name, base, box, self.step)
+                            fetched.update(n for n in result['authors'] if n not in team.member_ids)
+                        elif tool == 'contract' and self.contracts:
+                            action = reply.get('contract')
+                            if isinstance(action, dict) and action.get('operation') == 'settle':
+                                with tempfile.TemporaryDirectory(prefix='codetest-contract-source-') as temp:
+                                    source = Path(temp) / 'source'
+                                    box.snapshot(source)
+                                    result = self.contracts.perform(a.name, action, self.step, self.bank + probes,
+                                                                   source=source, verify=lambda source, checks: probe_score(self.task, source, checks))
+                            else:
+                                result = self.contracts.perform(a.name, action, self.step, self.bank + probes)
+                            self.assert_accounting()
+                        else:
+                            raise ValueError('Unknown tool or unavailable reference')
+                    except (ValueError, TypeError, json.JSONDecodeError) as e:
+                        result = {'status': 'invalid_action', 'error': str(e)}
+                    msg = self.route_message(a, team.member_ids, reply)
+                    if self.cfg.memory_trace:
+                        # Bounded trace of this agent's own actions, not only its latest note.
+                        a.memory = (a.memory + f"\n[r{self.step} s{slot} {tool}:{result.get('status')}] {msg}")[-2000:]
+                    else:
+                        a.memory = msg
+                    entry = {'author': a.name, 'tool': tool, 'message': msg,
+                             'result': json.dumps(result, ensure_ascii=False)[:4500]}
+                    transcript.append(entry)
+                    personal_results[a.name].append(entry)
+                    self.emit('tool', agent=a.name, team=team.team_id, slot=slot, tool=tool, result=result)
+                    if not box.alive:
+                        raise RuntimeError('Candidate sandbox stopped; allocated work incomplete')
+            source = directory / 'source'
+            box.snapshot(source)
+        return {'base': base, 'probes': probes, 'workers': workers, 'fetched_from': sorted(fetched),
+                'personal_results': personal_results}
+
+    def assess(self, team, directory, work):
+        """Package, check and share the workspace snapshot; no votes or eligibility here."""
+        source = directory / 'source'
+        probes = work['probes']
+        self.restore_protected(source)
+        # Validate exactly the files that will be submitted, on a fresh checkout.
+        if self.task.data['benchmark'] == 'programbench' and (source / 'executable').is_file():
+            (source / 'executable').unlink()
+        staged = Repository(directory / 'tracked-repository', source)
+        staged.package(directory / 'candidate.tar.gz')
+        source = directory / 'tracked-source'
+        safe_extract((directory / 'candidate.tar.gz').read_bytes(), source)
+        check = self.task.check(source, directory / 'check')
+        if self.task.data['benchmark'] == 'programbench' and check.get('build'):
+            check['probes'] = probe_score(self.task, source, self.bank + probes)
+        # Evidence/notes-only proposals can be useful while the implementation is incomplete.
+        changed = tree_digest(source) != tree_digest(self.repo.path)
+        changed_paths = changed_files(self.repo.path, source)
+        code_changed = any(not name.endswith('.md') for name in changed_paths)
+        proposal = {'team': team.team_id, 'members': team.member_ids, 'base_commit': work['base'],
+                    'source': str(source), 'check': check, 'changed': changed, 'changed_paths': changed_paths,
+                    'code_changed': code_changed, 'new_probes': probes, 'workers': sorted(work['workers']),
+                    'fetched_from': work['fetched_from'], 'votes': {}, 'pledges': {}}
+        if self.scratchpad and changed:
+            proposal['shared_artifact'] = self.scratchpad.share(proposal, self.repo.path, self.step)
         return proposal
 
     def regressed(self, check, code_changed):
@@ -445,7 +467,7 @@ class Engine:
                 self.assert_accounting()
             self.form()
             self.emit('membership', agents=self.roster())
-            teams = list(self.teams.active_teams(self.step))
+            teams = self.working_teams()
             self.rng.shuffle(teams)
             proposals = [self.candidate(team) for team in teams]
             self.apply(proposals)

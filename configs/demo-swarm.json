@@ -1,0 +1,13 @@
+{
+  "k": 8,
+  "rounds": 3,
+  "max_rounds": 3,
+  "work_calls": 4,
+  "condition": "swarm",
+  "shared_scratchpad": true,
+  "crowding_cap": 2,
+  "bounty_base": 0.05,
+  "bounty_growth": 0.25,
+  "royalty_rate": 0.2,
+  "seed": 7
+}

@@ -20,6 +20,23 @@ python run.py run --config configs/k5-gpt6-luna-scratchpad-gate.json --task data
 
 Compare final hidden score, accepted regressions, rounds without a publication, and cost per point. Test `memory_trace` as a separate run so the two effects stay separable. The new unit tests are in `tests/test_v1.py`; run the full suite before paid runs.
 
+### Swarm condition
+
+`"condition": "swarm"` replaces team formation, discussion, ballots and the auction with a stigmergic loop. The classic conditions are untouched, so the two can be compared on the same task, model and seed.
+
+1. **Task board.** The harness turns the public repository's failing visible tests into open tasks, one per test module (`junit` now keeps per-test ids). Each task carries a virtual bounty, `bounty_base` per test, growing by `bounty_growth` for every round the test stays failing. Before the package builds and scores there is a single `bootstrap` task.
+2. **Claims instead of teams.** Each round the harness wakes at most two agents per open group slot (richest first, random ties); the rest sleep and cost nothing. A woken agent makes one `claim` call: open its own group on a task, `join` the leader of a group on that task (sharing one private workspace, up to `max_team_size`), or rest. A task admits `crowding_cap` independent groups (twice that during bootstrap). Groups last one round.
+3. **Equal work, as before.** Every active agent keeps the same work allowance; `work` observations carry the claimed task and the board.
+4. **Verified merge queue.** All candidates are checked, ranked by expected gain (newly passing minus newly failing tests), and merged one at a time: the first via the classic tree replacement, later ones by `git apply --3way` of their scratchpad patch onto the moved head, re-running the visible tests after each merge. A merge must flip at least one test to passing and may not break a passing test; otherwise the head is reverted and the candidate stays available as a scratchpad artifact. Merges per round therefore scale with the population.
+5. **Bounties instead of bids.** Money is issued only when tests flip in the public repository: the flipped tests' bounties go to the candidate's workers in equal shares, after `royalty_rate` of the sum is paid to authors of artifacts the group fetched. No pledge, no bucket brigade, no burn. `assert_accounting` still holds. Each agent sees `your_record`, the tests it has flipped per task, so specialization can form in context.
+
+```bash
+python run.py demo --config configs/demo-swarm.json --out runs/demo-swarm
+python run.py run --config configs/k10-gpt6-luna-swarm.json --task datasets/commit0-tinydb/task.json --out runs/tinydb-swarm
+```
+
+`metrics.json` gains a `swarm` block: merges per round, 3-way merges, rejected merges by reason, duplicate task claims, resting agent rounds, bounties issued and the royalty share. Suggested comparisons: swarm against `voluntary_pooled` plus scratchpad at k = 5, 10 and 20 (scaling curve), a same-dollar k = 1 baseline, and the three ablations that the swarm bundles (merge queue only, bounties only, board only). Swarm currently supports commit0 and the scripted fixture; ProgramBench would need a fixed reference probe pool to define flips. Unit tests: `tests/test_swarm.py`.
+
 ## Free quick start
 
 Requires Python 3.11+ and Git. No Docker or API key is needed for the scripted demo.

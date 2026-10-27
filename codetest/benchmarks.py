@@ -33,9 +33,12 @@ def junit(text):
     if not cases or len(set(identities)) != len(cases):
         return {'status': 'invalid_test_report', 'score': None, 'passed': 0, 'total': len(cases)}
     errors = sum(c.find('error') is not None for c in cases)
-    passed = sum(not any(c.find(k) is not None for k in ('failure', 'error', 'skipped')) for c in cases)
+    ok = [not any(c.find(k) is not None for k in ('failure', 'error', 'skipped')) for c in cases]
+    passed = sum(ok)
+    # Per-test identities let the swarm condition turn failing tests into open tasks.
+    failing = sorted(f'{c.get("classname") or "?"}::{c.get("name") or "?"}' for c, good in zip(cases, ok) if not good)
     return {'status': 'collection_error' if errors else 'scored', 'score': None if errors else passed / len(cases),
-            'passed': passed, 'total': len(cases), 'errors': errors}
+            'passed': passed, 'total': len(cases), 'errors': errors, 'failing': failing}
 
 
 def overlay_source(reference, source, destination, protected):

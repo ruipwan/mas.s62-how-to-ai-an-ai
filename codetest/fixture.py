@@ -60,8 +60,12 @@ class FixtureTask(Task):
         files = list(Path(source).glob('module_*.py'))
         for p in files:
             ast.parse(p.read_text())
+        # One synthetic "test" per expected module, in four groups of five, so the swarm demo has a task board.
+        present = {p.name for p in files}
+        failing = [f'fixture.group_{i // 5}::module_{i:02}' for i in range(20) if f'module_{i:02}.py' not in present]
         return {'build': True, 'status': 'scripted_fixture', 'score': len(files) / 20,
-                'passed': len(files), 'total': 20, 'note': 'Synthetic module coverage, not correctness'}
+                'passed': len(files), 'total': 20, 'failing': failing,
+                'note': 'Synthetic module coverage, not correctness'}
 
     def check(self, source, report_dir):
         Path(report_dir).mkdir(parents=True, exist_ok=True)
@@ -79,6 +83,25 @@ class FixtureClient:
                      'message': 'Let us compare module behavior and inspect each other’s changes.'}
         elif phase == 'join':
             reply = {'invitation': o['invitations'][0]['id'], 'message': 'I accept; we can test the same branch.'}
+        elif phase == 'claim':
+            # Agent i can only ever flip module i, so it prefers the task group holding that module.
+            # Odd agents join an existing group with room; even agents open a group when a slot is open.
+            tasks = o['task_board']['tasks']
+            mine = f'fixture.group_{(i // 5) % 4}'
+            reply = {'task': None, 'join': None, 'approach': '', 'message': 'Resting: nothing fits this round.'}
+            for t in sorted(tasks, key=lambda t: t['id'] != mine):
+                room = [g['leader'] for g in t['groups'] if g['room']]
+                if i % 2 and room:
+                    reply = {'task': t['id'], 'join': room[0], 'approach': f'Add module {i:02} beside the leader.',
+                             'message': 'Joining to share one workspace.'}
+                elif t['open_slots'] > 0:
+                    reply = {'task': t['id'], 'join': None, 'approach': f'Write module {i:02}.',
+                             'message': 'Opening an independent group.'}
+                elif room:
+                    reply = {'task': t['id'], 'join': room[0], 'approach': f'Add module {i:02}.', 'message': 'Joining.'}
+                else:
+                    continue
+                break
         elif phase == 'discuss':
             reply = {'message': f'I will inspect module {i:02}, check the interface, and record a reproducible change.'}
         elif phase == 'work':

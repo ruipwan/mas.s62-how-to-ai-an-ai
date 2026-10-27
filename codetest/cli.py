@@ -101,6 +101,11 @@ def execute(cfg, task, out, *, demo=False, team_evolution=False):
         manifest['architecture'] = cfg.condition
         manifest['worker_count'] = cfg.worker_count
         manifest['note'] = 'No market. Work, peer discussion, orchestration, voting and synthesis are recorded separately. Baseline sources are isolated from market experiments.'
+    elif cfg.condition == 'swarm':
+        manifest['architecture'] = 'swarm'
+        manifest['note'] = ('Task board from failing visible tests, one claim call per active agent, verified merge '
+                            'queue, bounties only for test flips. Control overhead is measured separately from equal '
+                            'private work allocations.')
     write_json(out / 'manifest.json', manifest)
     # Keep the exact implementation alongside its hashes as the harness evolves.
     for relative, expected in manifest['source_hashes'].items():
@@ -146,6 +151,9 @@ def execute(cfg, task, out, *, demo=False, team_evolution=False):
                 return IndependentPolicy(own_client, cfg, events)
             engine = IndependentEngine(cfg, task, policy_factory, events, out,
                                        pool_root=None if demo else ROOT / 'artifacts/baseline-sandbox-leases')
+        elif cfg.condition == 'swarm':
+            from .swarm import SwarmEngine
+            engine = SwarmEngine(cfg, task, policy, events, out)
         else:
             engine = Engine(cfg, task, policy, events, out)
         engine.run()

@@ -36,6 +36,12 @@ class Config:
     # and keep a bounded per-agent action trace instead of only the latest note.
     regression_gate: bool = False
     memory_trace: bool = False
+    # Swarm condition: failing visible tests form a task board; agents claim tasks,
+    # verified merges pay bounties. Money is issued only against test flips.
+    crowding_cap: int = 2
+    bounty_base: float = 0.05
+    bounty_growth: float = 0.25
+    royalty_rate: float = 0.2
     independent_concurrency: int = 10
     sandbox_concurrency: int = 1
     synthesis_calls: int = 16
@@ -60,6 +66,11 @@ class Config:
                 raise ValueError(name + ' must be boolean')
         if (self.regression_gate or self.memory_trace) and self.condition in BASELINES:
             raise ValueError('regression_gate and memory_trace apply to market conditions only')
+        if self.condition == 'swarm':
+            if not self.shared_scratchpad or self.contribution_contracts or self.regression_gate:
+                raise ValueError('Swarm requires shared_scratchpad; contracts and the bid-era regression gate do not apply')
+            if type(self.crowding_cap) is not int or self.crowding_cap < 1:
+                raise ValueError('crowding_cap must be a positive integer')
         if type(self.parallel_experiments) is not bool:
             raise ValueError('parallel_experiments must be boolean')
         if type(self.adaptive_tokens) is not bool:
@@ -74,7 +85,7 @@ class Config:
             raise ValueError('Disabled reasoning conflicts with a positive reasoning effort')
         if not isinstance(self.provider_ignore, (list, tuple)) or any(not isinstance(x, str) or not x for x in self.provider_ignore):
             raise ValueError('provider_ignore must contain provider identifiers')
-        if self.condition not in {'solo', 'random_teams', 'voluntary_fixed', 'voluntary_pooled'} | BASELINES:
+        if self.condition not in {'solo', 'random_teams', 'voluntary_fixed', 'voluntary_pooled', 'swarm'} | BASELINES:
             raise ValueError('Unknown condition')
         for name in ('k', 'rounds', 'max_rounds', 'round_extension', 'work_calls', 'random_team_size', 'membership_every',
                      'control_tokens', 'work_tokens', 'max_response_tokens', 'context_chars',
@@ -102,12 +113,15 @@ class Config:
         if type(self.seed) is not int or self.seed < 0:
             raise ValueError('seed must be a nonnegative integer')
         for name in ('initial_wealth', 'progress_alpha', 'terminal_reward', 'fixed_bid',
-                     'run_cap_usd', 'input_price_cap', 'output_price_cap'):
+                     'run_cap_usd', 'input_price_cap', 'output_price_cap',
+                     'bounty_base', 'bounty_growth', 'royalty_rate'):
             n = getattr(self, name)
             if type(n) not in (int, float) or not math.isfinite(n) or n < 0:
                 raise ValueError(name + ' must be finite and nonnegative')
         if not 0 < self.run_cap_usd <= 100 or min(self.input_price_cap, self.output_price_cap, self.fixed_bid) <= 0:
             raise ValueError('Invalid budget or price ceiling')
+        if self.condition == 'swarm' and (self.royalty_rate >= 1 or self.bounty_base <= 0):
+            raise ValueError('Swarm needs a positive bounty_base and a royalty_rate below 1')
 
     @property
     def worker_count(self):
@@ -125,6 +139,9 @@ class Config:
         for name in ('regression_gate', 'memory_trace'):
             if not getattr(self, name):
                 data.pop(name)  # Opt-in additions stay out of legacy manifests when off.
+        if self.condition != 'swarm':
+            for name in ('crowding_cap', 'bounty_base', 'bounty_growth', 'royalty_rate'):
+                data.pop(name)
         return data
 
     def estimate(self):
@@ -134,6 +151,8 @@ class Config:
         if self.condition in {'solo', 'random_teams'}:
             formation = 0
         control = 2 * self.k * self.max_rounds + formation
+        if self.condition == 'swarm':
+            control = self.k * self.max_rounds  # At most one claim call per agent per round; no discussion or ballot.
         synthesis = 0
         if self.condition in BASELINES:
             control = 0

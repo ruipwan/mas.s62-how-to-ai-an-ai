@@ -22,7 +22,10 @@ def action_schema(phase, shared_scratchpad=False, contribution_contracts=False):
     strings = {'type': 'array', 'items': text}
     communication = {'message': text, 'channel': {'type': 'string', 'enum': ['team', 'public', 'direct']},
                      'recipients': strings}
-    if phase == 'membership':
+    if phase == 'claim':
+        fields = {'task': {'type': ['string', 'null']}, 'join': {'type': ['string', 'null']},
+                  'approach': text, 'message': text}
+    elif phase == 'membership':
         fields = {'leave': {'type': 'boolean'}, 'invite': {'type': ['string', 'null']}, 'message': text}
     elif phase == 'join':
         fields = {'invitation': {'type': ['string', 'null']}, 'message': text}
