@@ -126,7 +126,11 @@ class Task:
             cmd = self.data.get('visible_test_command')
             if not cmd:
                 return {'build': True, 'status': 'build_only', 'score': None}
-            result = box.execute(cmd + ' --junitxml=/tmp/codetest-results.xml', timeout=300)
+            # Keep failure detail in the bounded JUnit artifact. Repeating long
+            # tracebacks/captured output on stdout can hit the sandbox's 2 MiB
+            # ceiling, destroy the container, and lose an otherwise complete XML.
+            # These are display options only; test selection and scoring stay fixed.
+            result = box.execute(cmd + ' --tb=no --show-capture=no --junitxml=/tmp/codetest-results.xml', timeout=300)
             write_json(report_dir / 'test-command.json', result)
             # XML routinely exceeds shell-output display limits; copy it as a bounded artifact.
             xml_path = report_dir / 'junit.xml'
